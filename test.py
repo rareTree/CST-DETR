@@ -98,5 +98,5 @@ _output_format_file = './data/2023DCASE_data/metadata_dev/dev-train-sony/fold3_r
 # temp_feat = np.load(os.path.join(_feat_dir, filename))
 # print(temp_feat.shape[0] % 250)
 
-targets_processed =
+
 

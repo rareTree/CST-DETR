@@ -241,7 +241,87 @@ class DataGenerator(object):
                     mask = np.tile(mask, 3)
                     label = mask * label[:, :, self._nb_classes:]
 
+                # self._shuffle 为 True 通常意味着是训练集
+                if not self._is_eval and self._shuffle:
+                    feat, label = self.apply_augmentation(feat, label)
+
                 yield feat, label
+
+    def apply_augmentation(self, feat, label):
+        """
+        综合数据增强函数
+        feat:  [Batch, Channels, Time, Freq]
+               - Ch 0-3: Log-Mel 能量谱 (W, Y, Z, X) -> **ACS时不翻转符号**
+               - Ch 4-6: Intensity Vectors (Y, Z, X) -> **ACS时必须翻转符号**
+        label: [Batch, Time, N_track, 4, K]
+               - axis 3: [act, x, y, z] -> 索引 0, 1, 2, 3
+        """
+        batch_size = feat.shape[0]
+
+        # 仅针对 7 通道 FOA 数据进行空间增强 (4 Mic + 3 IV)
+        # 如果是其他格式，直接跳过 ACS
+        do_acs = (self._nb_ch == 7)
+
+        # 通道索引定义
+        idx_iv_y, idx_iv_z, idx_iv_x = 4, 5, 6
+        # 标签坐标索引
+        idx_lbl_x, idx_lbl_y, idx_lbl_z = 1, 2, 3
+
+        # ---------------------------------------------------------------------
+        # 1. ACS (Audio Channel Swapping) - 空间增强
+        # ---------------------------------------------------------------------
+        if do_acs:
+            for b in range(batch_size):
+                # --- A. 50% 概率翻转 Y 轴 (左右镜像) ---
+                # 物理含义: Azimuth -> -Azimuth
+                if np.random.random() < 0.5:
+                    # 翻转 IV_Y (Ch 4) 的符号，不碰 Mel (Ch 1)
+                    feat[b, idx_iv_y, :, :] = -feat[b, idx_iv_y, :, :]
+
+                    # 翻转标签中的 Y 坐标
+                    if self._multi_accdoa:
+                        label[b, :, :, idx_lbl_y, :] = -label[b, :, :, idx_lbl_y, :]
+
+                # --- B. 50% 概率翻转 X 轴 (前后镜像) ---
+                # 物理含义: Azimuth -> 180 - Azimuth
+                if np.random.random() < 0.5:
+                    # 翻转 IV_X (Ch 6) 的符号
+                    feat[b, idx_iv_x, :, :] = -feat[b, idx_iv_x, :, :]
+
+                    # 翻转标签中的 X 坐标
+                    if self._multi_accdoa:
+                        label[b, :, :, idx_lbl_x, :] = -label[b, :, :, idx_lbl_x, :]
+
+                # --- C. 50% 概率翻转 Z 轴 (上下镜像) ---
+                # 物理含义: Elevation -> -Elevation
+                if np.random.random() < 0.5:
+                    # 翻转 IV_Z (Ch 5) 的符号
+                    feat[b, idx_iv_z, :, :] = -feat[b, idx_iv_z, :, :]
+
+                    # 翻转标签中的 Z 坐标
+                    if self._multi_accdoa:
+                        label[b, :, :, idx_lbl_z, :] = -label[b, :, :, idx_lbl_z, :]
+
+        # ---------------------------------------------------------------------
+        # 2. SpecAugment - 频域与时域掩码 (Time & Freq Masking)
+        # ---------------------------------------------------------------------
+        # 必须对所有通道、所有时间步/频率步应用相同的 Mask
+        for b in range(batch_size):
+            # 频率掩码 (Freq Masking)
+            if np.random.random() < 0.5:
+                F = feat.shape[3]
+                f_width = np.random.randint(1, int(F * 0.15))  # 最多遮挡 15%
+                f_start = np.random.randint(0, F - f_width)
+                feat[b, :, :, f_start:f_start + f_width] = 0.0
+
+            # 时间掩码 (Time Masking)
+            if np.random.random() < 0.5:
+                T = feat.shape[2]
+                t_width = np.random.randint(1, int(T * 0.15))  # 最多遮挡 15%
+                t_start = np.random.randint(0, T - t_width)
+                feat[b, :, t_start:t_start + t_width, :] = 0.0
+
+        return feat, label
 
     def _split_in_seqs(self, data, _seq_len):
         if len(data.shape) == 1:
