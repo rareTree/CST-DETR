@@ -231,6 +231,9 @@ def main(argv):
             if val_seld_scr <= best_seld_scr:
                 best_val_epoch, best_ER, best_F, best_LE, best_LR, best_seld_scr = epoch_cnt, val_ER, val_F, val_LE, val_LR, val_seld_scr
                 torch.save(model.state_dict(), model_name)
+                patience_cnt = 0
+            else:
+                patience_cnt += 1
 
             # Print stats
             print(
@@ -263,7 +266,7 @@ def main(argv):
                                  train_loss, val_loss, val_seld_scr,val_ER, val_F, val_LE, val_LR,
                                  train_loss_rec, valid_loss_rec, valid_seld_scr_rec,
                                  valid_ER_rec, valid_F_rec, valid_LE_rec, valid_LR_rec, learning_rate_rec)
-            patience_cnt += 1
+
             if patience_cnt > params['patience']:
                 break
 
