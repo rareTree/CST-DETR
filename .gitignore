@@ -1,0 +1,8 @@
+*.md
+LICENSE
+*.txt
+*.xml
+*.idea
+*.png
+data/
+output/
