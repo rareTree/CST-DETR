@@ -100,7 +100,7 @@ def get_params(argv='1'):
     params['feature_sequence_length'] = params['label_sequence_length'] * params['feature_label_resolution']
     params['t_pool_size'] = [params['feature_label_resolution'], 1, 1]  # CNN time pooling
     # params['t_pool_size'] = [1, 1, feature_label_resolution]
-    params['patience'] = 200  # Stop training if patience is reached
+    params['patience'] = 100  # Stop training if patience is reached
 
     # ########### User defined parameters ##############
     if argv == '1':

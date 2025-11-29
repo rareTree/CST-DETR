@@ -27,12 +27,6 @@ class CST_former(torch.nn.Module):
         self.ch_attn_unfold = params['ChAtten_ULE']
         self.cmt_block = params['CMT_block']
         self.encoder = Encoder(in_feat_shape, params)
-        self.positional_encoding = PositionalEncoding()
-        self.query_generator = SELDQueryGenerator()
-        self.decoder_layer = TransformerDecoderLayer(64, 4, 256)
-        self.decoder_norm = nn.LayerNorm(64)
-        self.decoder = TransformerDecoder(self.decoder_layer, 6, self.decoder_norm)
-        self.ffn = DETR_SELD_Head()
 
         self.print_result = params['print_result']
 
@@ -62,6 +56,13 @@ class CST_former(torch.nn.Module):
 
         ## Fully Connected Layer ======================================================================================#
         ## 全连接层：将注意力输出映射到最终结果（如声音事件类别和方位）
+
+        self.positional_encoding = PositionalEncoding()
+        self.query_generator = SELDQueryGenerator()
+        self.decoder_layer = TransformerDecoderLayer(64, 4, 256)
+        self.decoder_norm = nn.LayerNorm(64)
+        self.decoder = TransformerDecoder(self.decoder_layer, 6, self.decoder_norm)
+        self.ffn = DETR_SELD_Head()
 
         # 初始化模型参数
         self.apply(self._init_weights)

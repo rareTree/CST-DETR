@@ -16,7 +16,20 @@ def draw_loss(log_dir, epoch, best_val_epoch,learning_rate,
     valid_LE[epoch] = val_le/180
     valid_LR[epoch] = val_lr
     valid_seld_scr[epoch] = val_seld_scr
-    learning_rate_rec[epoch] = learning_rate
+    if learning_rate_rec.ndim == 2:
+        if isinstance(learning_rate, (list, tuple, np.ndarray)):
+            # 如果传入的是列表 [backbone_lr, head_lr]
+            learning_rate_rec[epoch, :] = learning_rate
+        else:
+            # 如果只传了一个数，两列都存一样的
+            learning_rate_rec[epoch, :] = learning_rate
+    else:
+        # 1D 数组 (原模型逻辑)
+        if isinstance(learning_rate, (list, tuple, np.ndarray)):
+            # 如果是列表但只有 1D 存储空间，默认存最后一个 (Head LR)
+            learning_rate_rec[epoch] = learning_rate[-1]
+        else:
+            learning_rate_rec[epoch] = learning_rate
 
     plt.rcParams.update({'font.size': 12})
     plt.figure(figsize=(10, 16))
@@ -26,7 +39,7 @@ def draw_loss(log_dir, epoch, best_val_epoch,learning_rate,
     plt.axvline(x=best_val_epoch, color='k', linestyle='--', label='best val epoch')
     plt.grid()
     plt.xlabel('Epoch')
-    plt.ylabel('MSE Loss')
+    plt.ylabel('Loss')
     plt.yscale('log')
     plt.ylim((1e-2, 10))
     plt.legend(fontsize=12)
@@ -49,7 +62,14 @@ def draw_loss(log_dir, epoch, best_val_epoch,learning_rate,
     plt.title('SELD metrics on validation dataset')
 
     plt.subplot(3,1,3)
-    plt.plot(epoch_axis, learning_rate_rec[:epoch + 1], 'g')
+    if learning_rate_rec.ndim == 2:
+        # 画两条线：Backbone (虚线) 和 Head (实线)
+        plt.plot(epoch_axis, learning_rate_rec[:epoch + 1, 0], 'g--', label='Backbone LR')
+        plt.plot(epoch_axis, learning_rate_rec[:epoch + 1, 1], 'g', label='Head LR')
+        plt.legend(fontsize=12)
+    else:
+        # 画一条线 (兼容旧模型)
+        plt.plot(epoch_axis, learning_rate_rec[:epoch + 1], 'g', label='LR')
     plt.grid()
     plt.xlabel('Epoch')
     plt.ylabel('Learning Rate')

@@ -19,6 +19,7 @@ from architecture import CST_former_model as model_architecture
 from utility.test_epoch import test_epoch
 from utility.test_detr_epoch import test_detr_epoch
 from utility.train_epoch import train_epoch as train_epoch
+from utility.train_detr_epoch import train_detr_epoch
 from utility.loss_adpit import MSELoss_ADPIT
 from architecture.DETR_details.DCST_loss import HungarianMatcher,SetCriterion
 
@@ -175,7 +176,62 @@ def main(argv):
         if params['lr'] is None:  # only base_lr is specified  # 若未指定学习率，根据batch_size和基础学习率计算
             params['lr'] = params['blr'] * params['batch_size'] / 256
 
-        optimizer = optim.Adam(model.parameters(), lr=params['lr'])  # 初始化Adam优化器，传入模型参数和学习率
+        if params['use_detr']:
+            print(">>> Initialize Optimizer with Layer-wise Learning Rate for DETR")
+
+            base_lr = params['lr']
+            backbone_lr = base_lr * 0.1  # Backbone 降速 (例如 1e-4)
+            head_lr = base_lr  # Head 全速 (例如 1e-3)
+
+            # 2. 定义 Backbone 的关键词 (CST-former 原有部分)
+            # 只要参数名包含这些词，就认为是 Backbone
+            detr_keywords = ["query_generator", "decoder", "ffn", "positional_encoding"]
+
+            # 3. 筛选参数
+            backbone_params = []
+            head_params = []
+
+            for name, param in model.named_parameters():
+                if not param.requires_grad:
+                    continue  # 跳过冻结的参数
+
+                # 检查参数名是否包含 backbone 关键词
+                if any(k in name for k in detr_keywords):
+                    head_params.append(param)
+                    # print(f"  [Backbone] {name}") # 调试时可取消注释
+                else:
+                    backbone_params.append(param)
+                    # print(f"  [Head]     {name}") # 调试时可取消注释
+
+            # 4. 构建参数组
+            param_groups = [
+                {"params": backbone_params, "lr": backbone_lr},
+                {"params": head_params, "lr": head_lr}
+            ]
+
+            optimizer = optim.Adam(param_groups)
+            print(f"    Backbone LR: {backbone_lr} (Params: {len(backbone_params)})")
+            print(f"    Head LR:     {head_lr} (Params: {len(head_params)})")
+
+            # 3. 初始化自动调度器 (ReduceLROnPlateau)
+            # 当验证集分数不再下降时，自动降低学习率
+            print(">>> Initialize ReduceLROnPlateau Scheduler")
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode='min',
+                factor=0.5,  # 每次降速一半 (例如 0.001 -> 0.0005)
+                patience=50,  # 忍耐 20 个 epoch
+                verbose=True,
+                min_lr=1e-6
+            )
+
+        else:
+            # === 原模型逻辑 (保持不变) ===
+            # 若未指定学习率，根据batch_size和基础学习率计算
+            if params['lr'] is None:
+                params['lr'] = params['blr'] * params['batch_size'] / 256
+            optimizer = optim.Adam(model.parameters(), lr=params['lr'])
+
 
         # loss preparation
         if params['multi_accdoa'] is True:
@@ -208,7 +264,11 @@ def main(argv):
             # TRAINING
             # ---------------------------------------------------------------------
             start_time = time.time()
-            train_loss, learning_rate, = train_epoch(data_gen_train, optimizer, model, criterion,
+            if params['use_detr']:
+                train_loss, learning_rate = train_detr_epoch(data_gen_train, optimizer, model, criterion,
+                                                        params, device, epoch_cnt)
+            else:
+                train_loss, learning_rate, = train_epoch(data_gen_train, optimizer, model, criterion,
                                                          params, device, epoch_cnt)  # 执行训练epoch，返回训练损失和当前学习率
 
             train_time = time.time() - start_time
@@ -225,6 +285,28 @@ def main(argv):
             val_ER, val_F, val_LE, val_LR, val_seld_scr, classwise_val_scr = score_obj.get_SELD_Results(
                 dcase_output_val_folder)
 
+            # 只有 DETR 模型，且调度器已初始化时才执行
+            if params['use_detr'] and scheduler is not None:
+                # 将当前的验证分数告诉管家
+                scheduler.step(val_seld_scr)
+
+            if len(optimizer.param_groups) > 1:
+                # 分层学习率：显示 "Backbone / Head"
+                lr_backbone = optimizer.param_groups[0]['lr']
+                lr_head = optimizer.param_groups[1]['lr']
+                # 格式：CST学习率 / DETR学习率
+                lr_str = "{:0.5f}/{:0.5f}".format(lr_backbone, lr_head)
+                # 更新 learning_rate 变量为 Head 的 LR (用于画图记录等，保持主要指标)
+            else:
+                # 单一学习率
+                learning_rate = optimizer.param_groups[0]['lr']
+                lr_str = "{:0.5f}".format(learning_rate)
+
+            if params['use_detr']:
+                learning_rate_rec = np.empty([params["nb_epochs"], 2])
+            else:
+                learning_rate_rec = np.empty([params["nb_epochs"]])
+
             val_time = time.time() - start_time
 
             # Save model if loss is good
@@ -238,12 +320,12 @@ def main(argv):
             # Print stats
             print(
                 'epoch: {}, time: {:0.2f}/{:0.2f}, '
-                'lr:{:0.4f},'
+                'lr:{},'
                 'train_loss: {:0.4f}, val_loss: {:0.4f}, '
                 'ER/F/LE/LR/SELD: {}, '
                 'best_val_epoch: {} {}'.format(
                     epoch_cnt, train_time, val_time,
-                    learning_rate,
+                    lr_str,
                     train_loss, val_loss,
                     '{:0.2f}/{:0.2f}/{:0.2f}/{:0.2f}/{:0.2f}'.format(val_ER, val_F, val_LE, val_LR, val_seld_scr),
                     best_val_epoch,
@@ -252,7 +334,7 @@ def main(argv):
             )
 
             log_stats = {'epoch': epoch_cnt,
-                         'lr':learning_rate,
+                         'lr':lr_str,
                         'train_loss': train_loss,
                          'valid_loss': val_loss,
                          'val_ER': val_ER, 'val_F': val_F, 'val_LE': val_LE, 'val_LR': val_LR,
@@ -261,8 +343,14 @@ def main(argv):
             with open(os.path.join(dcase_output_folder, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
+            if params['use_detr'] and len(optimizer.param_groups) > 1:
+                # 传入列表 [backbone_lr, head_lr]
+                current_lr_to_draw = [optimizer.param_groups[0]['lr'], optimizer.param_groups[1]['lr']]
+            else:
+                current_lr_to_draw = learning_rate
+
             train_loss_rec, valid_loss_rec, valid_seld_scr_rec, valid_ER_rec, valid_F_rec, valid_LE_rec, valid_LR_rec, learning_rate_rec \
-                = draw_loss(dcase_output_folder, epoch_cnt, best_val_epoch, learning_rate,
+                = draw_loss(dcase_output_folder, epoch_cnt, best_val_epoch, current_lr_to_draw,
                                  train_loss, val_loss, val_seld_scr,val_ER, val_F, val_LE, val_LR,
                                  train_loss_rec, valid_loss_rec, valid_seld_scr_rec,
                                  valid_ER_rec, valid_F_rec, valid_LE_rec, valid_LR_rec, learning_rate_rec)
