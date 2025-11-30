@@ -11,7 +11,7 @@ def get_params(argv='1'):
 
         finetune_mode=True,
         # Finetune on existing model, requires the pretrained model path set - pretrained_model_weights
-        pretrained_model_weights='output/2023/33_1_dev_split0_multiaccdoa_foa/models_syn_1/model.h5',
+        pretrained_model_weights='output/2023/33_1_dev_split0_multiaccdoa_foa/models_syn_wei/model.h5',
 
         # INPUT PATHnum
         dataset_dir='./data/2023DCASE_data/',  # Base folder containing the foa/mic and metadata folders
@@ -20,7 +20,7 @@ def get_params(argv='1'):
         feat_label_dir='./data/feature_labels_2023/',  # Directory to dump extracted features and labels
 
         save_dir='output/2023',  # 'output/2022', 'output/2023'
-        model_dir='models_syn_wei/',  # Dumps the trained models and training curves in this folder
+        model_dir='models_syn_loss/',  # Dumps the trained models and training curves in this folder
         dcase_output_dir='results/',  # recording-wise results are dumped in this path.
 
         # DATASET LOADING PARAMETERS
