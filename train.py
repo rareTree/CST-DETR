@@ -257,7 +257,10 @@ def main(argv):
         valid_F_rec = np.empty([params["nb_epochs"]])  # 存储验证F值的数组
         valid_LE_rec = np.empty([params["nb_epochs"]])  # 存储验证LE的数组
         valid_LR_rec = np.empty([params["nb_epochs"]])  # 存储验证LR的数组
-        learning_rate_rec = np.empty([params["nb_epochs"]])  # 存储学习率的数组
+        if params['use_detr']:
+            learning_rate_rec = np.zeros([params["nb_epochs"], 2])  # 建议改用 zeros
+        else:
+            learning_rate_rec = np.zeros([params["nb_epochs"]])
 
         for epoch_cnt in range(nb_epoch):  # 遍历每个训练epoch
             # ---------------------------------------------------------------------
@@ -295,17 +298,12 @@ def main(argv):
                 lr_backbone = optimizer.param_groups[0]['lr']
                 lr_head = optimizer.param_groups[1]['lr']
                 # 格式：CST学习率 / DETR学习率
-                lr_str = "{:0.5f}/{:0.5f}".format(lr_backbone, lr_head)
+                lr_str = "{:0.6f}/{:0.6f}".format(lr_backbone, lr_head)
                 # 更新 learning_rate 变量为 Head 的 LR (用于画图记录等，保持主要指标)
             else:
                 # 单一学习率
                 learning_rate = optimizer.param_groups[0]['lr']
                 lr_str = "{:0.5f}".format(learning_rate)
-
-            if params['use_detr']:
-                learning_rate_rec = np.empty([params["nb_epochs"], 2])
-            else:
-                learning_rate_rec = np.empty([params["nb_epochs"]])
 
             val_time = time.time() - start_time
 
