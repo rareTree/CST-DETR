@@ -65,7 +65,7 @@ def draw_loss(log_dir, epoch, best_val_epoch,learning_rate,
     if learning_rate_rec.ndim == 2:
         # 画两条线：Backbone (虚线) 和 Head (实线)
         plt.plot(epoch_axis, learning_rate_rec[:epoch + 1, 0], 'g--', label='Backbone LR')
-        plt.plot(epoch_axis, learning_rate_rec[:epoch + 1, 1], 'g', label='Head LR')
+        plt.plot(epoch_axis, learning_rate_rec[:epoch + 1, 1], 'r', label='Head LR')
         plt.legend(fontsize=12)
     else:
         # 画一条线 (兼容旧模型)
