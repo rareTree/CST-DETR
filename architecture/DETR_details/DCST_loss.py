@@ -7,58 +7,6 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 
 
-class FocalLoss(nn.Module):
-    def __init__(self, weight=None, gamma=2.0, reduction='mean'):
-        """
-        Focal Loss for Multi-class Classification
-        Args:
-            weight: (Tensor, optional) 每个类别的权重 (即 SetCriterion 中的 empty_weight)
-            gamma: (float) 聚焦参数，通常设为 2.0。值越大，模型越关注难分样本。
-            reduction: 'mean' or 'sum'
-        """
-        super(FocalLoss, self).__init__()
-        self.weight = weight
-        self.gamma = gamma
-        self.reduction = reduction
-
-    def forward(self, input_tensor, target_tensor):
-        """
-        input_tensor: [N, C] (Logits, 未经过 softmax)
-        target_tensor: [N] (类别索引)
-        """
-        # 1. 计算标准的 Log Softmax
-        log_prob = F.log_softmax(input_tensor, dim=-1)
-
-        # 2. 获取概率 p = exp(log_p)
-        prob = torch.exp(log_prob)
-
-        # 3. 获取对应目标类别的概率 pt
-        # target_tensor.view(-1, 1) -> [N, 1]
-        # gather 提取每个样本真实类别对应的预测概率
-        pt = prob.gather(1, target_tensor.view(-1, 1))
-        log_pt = log_prob.gather(1, target_tensor.view(-1, 1))
-
-        # 4. 如果有类别权重 (如 eos_coef)，应用它
-        # self.weight 是 [C] 维向量
-        if self.weight is not None:
-            if self.weight.device != input_tensor.device:
-                self.weight = self.weight.to(input_tensor.device)
-
-            # 获取每个样本对应的类别权重 alpha_t
-            at = self.weight.gather(0, target_tensor.view(-1))
-            log_pt = log_pt * at.view(-1, 1)
-
-        # 5. 计算 Focal Loss 公式: - (1 - pt)^gamma * log(pt) * alpha
-        # (1 - pt) 是调制因子：样本越容易分类 (pt大)，(1-pt)越小，损失权重越低
-        loss = -1 * (1 - pt) ** self.gamma * log_pt
-
-        if self.reduction == 'mean':
-            return loss.mean()
-        elif self.reduction == 'sum':
-            return loss.sum()
-        else:
-            return loss
-
 class HungarianMatcher(nn.Module):
     def __init__(self, cost_class: float = 2.0, cost_doa: float = 5.0):
         super().__init__()
@@ -108,7 +56,6 @@ class SetCriterion(nn.Module):
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[-1] = eos_coef
         self.register_buffer("empty_weight", empty_weight)
-        self.focal_loss = FocalLoss(weight=self.empty_weight, gamma=2.0, reduction='mean')
 
     def forward(self, outputs, targets_adpit):
         device = outputs['pred_logits'].device
@@ -138,8 +85,7 @@ class SetCriterion(nn.Module):
         pred_logits_flat = outputs_flat['pred_logits'].flatten(0, 1)
         target_classes_flat = target_classes_o.flatten(0, 1)
 
-        # Focal Loss 内部会自动使用我们传入的 empty_weight
-        loss_class = self.focal_loss(pred_logits_flat, target_classes_flat)
+        loss_class = F.cross_entropy(pred_logits_flat, target_classes_flat, weight=self.empty_weight)
 
         pred_doa_matched = outputs_flat['pred_doa'][src_idx]
         target_doa_matched = torch.cat([t['doa'][J] for t, (_, J) in zip(targets_processed, indices)], dim=0)
