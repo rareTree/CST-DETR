@@ -27,6 +27,8 @@ class CST_former(torch.nn.Module):
         self.ch_attn_unfold = params['ChAtten_ULE']
         self.cmt_block = params['CMT_block']
         self.encoder = Encoder(in_feat_shape, params)
+        self.enc_score_head = nn.Linear(64, 1)
+        self.num_queries = 300
 
         self.print_result = params['print_result']
 
@@ -61,7 +63,8 @@ class CST_former(torch.nn.Module):
         self.query_generator = SELDQueryGenerator()
         self.decoder_layer = TransformerDecoderLayer(64, 4, 256)
         self.decoder_norm = nn.LayerNorm(64)
-        self.decoder = TransformerDecoder(self.decoder_layer, 6, self.decoder_norm)
+        self.decoder = TransformerDecoder(self.decoder_layer, 6, self.decoder_norm,
+                                          return_intermediate=params['return_intermediate'])
         self.ffn = DETR_SELD_Head()
 
         # 初始化模型参数
@@ -119,17 +122,33 @@ class CST_former(torch.nn.Module):
 
         # 加入位置编码
         pos = self.positional_encoding(x)
-        pos = rearrange(pos, 'b c t f -> (t f) b c').contiguous()
-        memory = rearrange(x, 'b c t f -> (t f) b c').contiguous()
+        pos = rearrange(pos, 'b c t f -> b (t f) c').contiguous()
+        memory = rearrange(x, 'b c t f -> b (t f) c').contiguous()
         if self.print_result:
             print(f"memory after positional encoding(x.size):{memory.shape}")
 
+        # 1. 给 Encoder 的所有特征点打分
+        enc_logits = self.enc_score_head(memory).squeeze(-1)
 
-        tgt, query_pos = self.query_generator(B)
+        # 2. 选出分数最高的 Top-K 个索引 (K = num_queries)
+        K = self.num_queries
+        topk_scores, topk_indices = torch.topk(enc_logits, K, dim=1)
+
+        # 3. 提取 Top-K 的特征作为 Content Query (tgt)
+        batch_idx = torch.arange(B, device=x.device).unsqueeze(1).repeat(1, K)
+
+        tgt = memory[batch_idx, topk_indices]
+        query_pos = pos[batch_idx, topk_indices]
+        # tgt, query_pos = self.query_generator(B)
         tgt = tgt.permute(1, 0, 2)
         query_pos = query_pos.permute(1, 0, 2)
         if self.print_result:
             print(f"tgt:{tgt.shape}, query_pos:{query_pos.shape}")
+
+        memory = memory.permute(1, 0, 2)
+        pos = pos.permute(1, 0, 2)
+        if self.print_result:
+            print(f"memory:{memory.shape}, pos_pos:{pos.shape}")
 
         hs = self.decoder(tgt, memory, query_pos=query_pos, pos=pos)
         if self.print_result:
@@ -140,6 +159,26 @@ class CST_former(torch.nn.Module):
         if self.print_result:
             print("=================== FC ===================")
         # 经过全连接层输出最终结果（DOA：方向角，包含声音事件类别和定位信息）
-        doa = self.ffn(hs)
+        outputs_list = []
+        for i in range(hs.shape[0]):
+            # hs[i] 是第 i 层的输出，形状 [Q, B, C]
+            # ffn 期望输入 [1, Q, B, C] (因为它内部做了 squeeze(0))
+            # 所以我们用 unsqueeze(0) 增加一个维度
+            layer_out = self.ffn(hs[i].unsqueeze(0))
+            outputs_list.append(layer_out)
 
-        return doa
+        if self.print_result:
+            print(f"outputs_list:{len(outputs_list)}")
+
+        # 3. 组织输出格式
+        # 取出最后一层作为“主输出”
+        outputs = outputs_list[-1]
+
+        # 如果有中间层，把它们打包进 'aux_outputs'
+        if self.decoder.return_intermediate:
+            # outputs_list[:-1] 是除了最后一层之外的所有层 (L1...L5)
+            outputs['aux_outputs'] = outputs_list[:-1]
+
+        if self.print_result:
+            print(f"outputs:{outputs.keys()}")
+        return outputs

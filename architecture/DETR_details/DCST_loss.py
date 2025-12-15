@@ -57,27 +57,34 @@ class SetCriterion(nn.Module):
         empty_weight[-1] = eos_coef
         self.register_buffer("empty_weight", empty_weight)
 
-    def forward(self, outputs, targets_adpit):
-        device = outputs['pred_logits'].device
-        B, T, N, _ = outputs["pred_logits"].shape
-
+    def get_loss(self, pred_logits, pred_doa, targets_adpit):
+        """
+        内部辅助函数：计算单层的 Loss (分类 + 回归)
+        """
+        # 1. 整理输出形状
+        # [B, T, N, K+1]
+        B, T, N, _ = pred_logits.shape
         outputs_flat = {}
-        outputs_flat['pred_logits'] = outputs['pred_logits'].reshape(-1, N, self.num_classes + 1)
-        outputs_flat['pred_doa'] = outputs['pred_doa'].reshape(-1, N, 3)
+        outputs_flat['pred_logits'] = pred_logits.reshape(-1, N, self.num_classes + 1)
+        outputs_flat['pred_doa'] = pred_doa.reshape(-1, N, 3)
 
-        # 1. 转换 GT (GPU 上进行)
-        targets_processed = self.convert_adpit_to_set(targets_adpit)
+        # 2. 转换 GT (targets_adpit 已经在 GPU 上)
+        # 注意：这里我们传入原始的 adpit targets，内部函数会处理
+        # 为了避免重复计算 convert_adpit_to_set，我们可以在 forward 里算好传进来
+        # 但为了接口简单，这里假设传入的是处理好的 targets_processed
+        targets_processed = targets_adpit
 
-        # 2. 匈牙利匹配
+        # 3. 匈牙利匹配
         indices = self.matcher(outputs_flat, targets_processed)
 
-        # 3. 计算损失
+        # 4. 获取索引
         src_idx = self._get_src_permutation_idx(indices)
 
+        # 5. 计算分类 Loss
         target_classes_o = torch.full(outputs_flat['pred_logits'].shape[:2],
                                       self.num_classes,
                                       dtype=torch.long,
-                                      device=device)
+                                      device=pred_logits.device)
 
         target_classes = torch.cat([t["labels"][J] for t, (_, J) in zip(targets_processed, indices)], dim=0)
         target_classes_o[src_idx] = target_classes
@@ -87,22 +94,46 @@ class SetCriterion(nn.Module):
 
         loss_class = F.cross_entropy(pred_logits_flat, target_classes_flat, weight=self.empty_weight)
 
+        # 6. 计算 DOA Loss
         pred_doa_matched = outputs_flat['pred_doa'][src_idx]
         target_doa_matched = torch.cat([t['doa'][J] for t, (_, J) in zip(targets_processed, indices)], dim=0)
 
         if pred_doa_matched.shape[0] > 0:
             loss_doa = F.l1_loss(pred_doa_matched, target_doa_matched, reduction="mean")
         else:
-            loss_doa = torch.tensor(0.0, device=device)
+            loss_doa = torch.tensor(0.0, device=pred_logits.device)
 
-        losses = {'loss_class': loss_class, 'loss_doa': loss_doa}
+        return loss_class, loss_doa
 
-        final_loss_dict = {}
-        for k, v in losses.items():
-            if k in self.losses and k in self.weight_dict and self.weight_dict[k] > 0:
-                final_loss_dict[k] = v * self.weight_dict[k]
+    def forward(self, outputs, targets_adpit):
+        """
+        计算总 Loss (主输出 + 辅助输出)
+        """
+        # 1. 预处理 GT (只需做一次)
+        targets_processed = self.convert_adpit_to_set(targets_adpit)
 
-        return sum(final_loss_dict.values())
+        # 2. 计算最后一层的主 Loss
+        loss_class, loss_doa = self.get_loss(outputs['pred_logits'], outputs['pred_doa'], targets_processed)
+
+        # 根据权重求和
+        final_loss = loss_class * self.weight_dict['loss_class'] + \
+                     loss_doa * self.weight_dict['loss_doa']
+
+        # 3. ★★★ 计算辅助 Loss (Aux Loss) ★★★
+        if 'aux_outputs' in outputs:
+            for i, aux_outputs in enumerate(outputs['aux_outputs']):
+                # 对每一层中间输出计算 loss
+                loss_class_aux, loss_doa_aux = self.get_loss(
+                    aux_outputs['pred_logits'],
+                    aux_outputs['pred_doa'],
+                    targets_processed
+                )
+
+                # 累加到总 Loss
+                final_loss += loss_class_aux * self.weight_dict['loss_class'] + \
+                              loss_doa_aux * self.weight_dict['loss_doa']
+
+        return final_loss
 
     def convert_adpit_to_set(self, targets_adpit: torch.Tensor):
         """

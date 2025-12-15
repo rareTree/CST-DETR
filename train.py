@@ -180,7 +180,7 @@ def main(argv):
             print(">>> Initialize Optimizer with Layer-wise Learning Rate for DETR")
 
             base_lr = params['lr']
-            backbone_lr = base_lr * 0.1  # Backbone 降速 (例如 1e-4)
+            backbone_lr = base_lr   # Backbone 降速 (例如 1e-4)
             head_lr = base_lr  # Head 全速 (例如 1e-3)
 
             # 2. 定义 Backbone 的关键词 (CST-former 原有部分)
