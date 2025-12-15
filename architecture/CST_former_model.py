@@ -27,8 +27,7 @@ class CST_former(torch.nn.Module):
         self.ch_attn_unfold = params['ChAtten_ULE']
         self.cmt_block = params['CMT_block']
         self.encoder = Encoder(in_feat_shape, params)
-        self.enc_score_head = nn.Linear(64, 1)
-        self.num_queries = 300
+
 
         self.print_result = params['print_result']
 
@@ -61,6 +60,18 @@ class CST_former(torch.nn.Module):
 
         self.positional_encoding = PositionalEncoding()
         self.query_generator = SELDQueryGenerator()
+        # 1. 评分头 : 判断特征点是不是事件
+        self.enc_score_head = nn.Linear(64, 1)
+        # 2. 初始坐标预测头 (从 Encoder 特征直接猜 DOA)
+        self.enc_doa_head = nn.Linear(64, 3)
+        # 3. 坐标 -> 位置编码 的映射 MLP (Refinement 核心)
+        # 将 3维坐标 映射回 64维 Pos Embedding
+        self.ref_point_head = nn.Sequential(
+            nn.Linear(3, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64)
+        )
+        self.pos_trans_norm = nn.LayerNorm(64)  # 防止梯度爆炸
         self.decoder_layer = TransformerDecoderLayer(64, 4, 256)
         self.decoder_norm = nn.LayerNorm(64)
         self.decoder = TransformerDecoder(self.decoder_layer, 6, self.decoder_norm,
@@ -120,52 +131,108 @@ class CST_former(torch.nn.Module):
         if self.print_result:
             print(f"x after attention(x.size):{x.shape}")
 
+        if self.print_result:
+            print("=================== DETR ===================")
+        # 经过全连接层输出最终结果（DOA：方向角，包含声音事件类别和定位信息）
+
         # 加入位置编码
         pos = self.positional_encoding(x)
-        pos = rearrange(pos, 'b c t f -> b (t f) c').contiguous()
-        memory = rearrange(x, 'b c t f -> b (t f) c').contiguous()
+        pos = pos.permute(0, 2, 3, 1)
+        memory = x.permute(0, 2, 3, 1)
+
         if self.print_result:
             print(f"memory after positional encoding(x.size):{memory.shape}")
 
         # 1. 给 Encoder 的所有特征点打分
-        enc_logits = self.enc_score_head(memory).squeeze(-1)
+        enc_logits = self.enc_score_head(memory)
 
-        # 2. 选出分数最高的 Top-K 个索引 (K = num_queries)
-        K = self.num_queries
-        topk_scores, topk_indices = torch.topk(enc_logits, K, dim=1)
+        # 2. 逐帧筛选: 在 Freq 维度 (dim=2) 选出每帧最强的 6 个点
+        num_q_per_frame = 6
+        # topk_indices: [B, T, 6, 1]
+        topk_scores, topk_indices = torch.topk(enc_logits, num_q_per_frame, dim=2)
 
-        # 3. 提取 Top-K 的特征作为 Content Query (tgt)
-        batch_idx = torch.arange(B, device=x.device).unsqueeze(1).repeat(1, K)
+        # 3. 提取特征 (tgt) 和位置 (pos)
+        # 扩展索引维度以匹配特征维度: [B, T, 6, C]
+        expand_indices = topk_indices.expand(-1, -1, -1, memory.shape[-1])
 
-        tgt = memory[batch_idx, topk_indices]
-        query_pos = pos[batch_idx, topk_indices]
-        # tgt, query_pos = self.query_generator(B)
-        tgt = tgt.permute(1, 0, 2)
-        query_pos = query_pos.permute(1, 0, 2)
+        # gather: [B, T, F, C] -> [B, T, 6, C]
+        tgt_frame = torch.gather(memory, 2, expand_indices)
+        pos_frame = torch.gather(pos, 2, expand_indices)
+
+        # 4. 展平为 [B, L_query, C] 以输入 Transformer (L_query = T * 6 = 300)
+        tgt = tgt_frame.flatten(1, 2)  # [B, 300, 64]
+        query_pos = pos_frame.flatten(1, 2)  # [B, 300, 64]
+
+        # 5. 预测初始参考点 (DOA)
+        # 使用选出的特征直接预测初始坐标
+        ref_points = self.enc_doa_head(tgt)  # [B, 300, 3]
+
+        # 6. 转换维度顺序: [Sequence, Batch, Channel] (Transformer 标准)
+        tgt = tgt.transpose(0, 1)  # [300, B, 64]
+        query_pos = query_pos.transpose(0, 1)  # [300, B, 64]
         if self.print_result:
             print(f"tgt:{tgt.shape}, query_pos:{query_pos.shape}")
 
-        memory = memory.permute(1, 0, 2)
-        pos = pos.permute(1, 0, 2)
+        # Memory 也要展平并转置: [B, T, F, C] -> [B, T*F, C] -> [T*F, B, C]
+        memory = memory.flatten(1, 2).transpose(0, 1)  # [800, B, 64]
+        pos = pos.flatten(1, 2).transpose(0, 1)
         if self.print_result:
             print(f"memory:{memory.shape}, pos_pos:{pos.shape}")
 
-        hs = self.decoder(tgt, memory, query_pos=query_pos, pos=pos)
-        if self.print_result:
-            print(f"hs:{hs.shape}")
+        # --- 迭代坐标细化 (Iterative Refinement) ---
+        output = tgt
+        current_pos = query_pos  # Layer 0 使用 Top-K 的原始 Pos
+        current_ref_points = ref_points  # 用于记录参考点变化
+        outputs_list = []
+        for layer_idx, layer in enumerate(self.decoder.layers):
+            # A. 运行当前层 Transformer
+            # 注意：pos 是 encoder 的位置编码 (Keys)，query_pos 是 decoder 的位置编码 (Queries)
+            output = layer(
+                output,
+                memory,
+                pos=pos,
+                query_pos=current_pos
+            )
+
+            # B. 归一化
+            if self.decoder.norm is not None:
+                output_norm = self.decoder.norm(output)
+            else:
+                output_norm = output
+
+            # C. 预测这一层的输出 (分类 + DOA)
+            # FFN 期望输入 [1, Q, B, C] (模拟 TransformerDecoder 的 unsqueeze 输出)
+            layer_predictions = self.ffn(output_norm.unsqueeze(0))
+
+            # 提取预测的 DOA: [B, T, N, 3] (ffn 内部做了 view) -> [B, T*N, 3] -> [B, Q, 3]
+            # 注意: detr_ffn 的 forward 返回的 pred_doa 是 [B, T, 6, 3]
+            # 我们需要把它展平为 [B, 300, 3] 才能进行下面的 MLP 映射
+            pred_doa_layer = layer_predictions['pred_doa'].flatten(1, 2)
+
+            # D. 更新下一层的 query_pos (如果是中间层)
+            if layer_idx < len(self.decoder.layers) - 1:
+                # 阻断梯度，防止位置生成的梯度回传
+                new_ref_points = pred_doa_layer.detach()
+
+                # 将坐标映射回位置编码
+                new_pos_embed = self.ref_point_head(new_ref_points)  # [B, 300, 64]
+                new_pos_embed = self.pos_trans_norm(new_pos_embed)
+
+                # 转回 Seq First: [300, B, 64]
+                current_pos = new_pos_embed.transpose(0, 1)
+
+                # 更新当前参考点 (逻辑上)
+                current_ref_points = new_ref_points
+
+            # E. 收集输出
+            outputs_list.append(layer_predictions)
+
+
+
         # 如果时间池化在末尾，应用池化层进一步降低维度
         if self.t_pooling_loc == 'end':
             x = self.t_pooling(x)
-        if self.print_result:
-            print("=================== FC ===================")
-        # 经过全连接层输出最终结果（DOA：方向角，包含声音事件类别和定位信息）
-        outputs_list = []
-        for i in range(hs.shape[0]):
-            # hs[i] 是第 i 层的输出，形状 [Q, B, C]
-            # ffn 期望输入 [1, Q, B, C] (因为它内部做了 squeeze(0))
-            # 所以我们用 unsqueeze(0) 增加一个维度
-            layer_out = self.ffn(hs[i].unsqueeze(0))
-            outputs_list.append(layer_out)
+
 
         if self.print_result:
             print(f"outputs_list:{len(outputs_list)}")

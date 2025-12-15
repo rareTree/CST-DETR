@@ -88,12 +88,12 @@ def get_params(argv='1'):
         lad_doa_thresh=20,
 
         # DETR
-        nb_max_obj=5,
+        nb_max_obj=10,
         d_model=64,
         num_decoder_layers=6,
         return_intermediate=True,
         use_detr=True,
-        print_result=False,
+        print_result=True,
     )
 
     params['feature_label_resolution'] = int(params['label_hop_len_s'] // params['hop_len_s'])
