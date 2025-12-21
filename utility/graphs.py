@@ -41,7 +41,7 @@ def draw_loss(log_dir, epoch, best_val_epoch,learning_rate,
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.yscale('log')
-    plt.ylim((1e-2, 10))
+    plt.ylim((1e-2, 20))
     plt.legend(fontsize=12)
     plt.title('Losses')
 

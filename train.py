@@ -21,7 +21,8 @@ from utility.test_detr_epoch import test_detr_epoch
 from utility.train_epoch import train_epoch as train_epoch
 from utility.train_detr_epoch import train_detr_epoch
 from utility.loss_adpit import MSELoss_ADPIT
-from architecture.DETR_details.DCST_loss import HungarianMatcher,SetCriterion
+from architecture.DETR_details.DCST_loss import HungarianMatcher, SetCriterion
+
 
 def main(argv):
     """
@@ -48,7 +49,7 @@ def main(argv):
     # os.environ["CUDA_VISIBLE_DEVICES"] = '2,3'
     device = torch.device('cuda')
 
-    #---------------------------------------------- (For Reproducibility)
+    # ---------------------------------------------- (For Reproducibility)
     # fix the seed for reproducibility
     seed = 2023
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -89,7 +90,7 @@ def main(argv):
         elif '2023' in params['dataset_dir']:
             test_splits = [[4]]
             val_splits = [[4]]
-            train_splits = [[1,2,3]]
+            train_splits = [[1, 2, 3]]
         else:
             print('ERROR: Unknown dataset splits')
             exit()
@@ -136,7 +137,7 @@ def main(argv):
         matcher = HungarianMatcher(cost_class=2.0, cost_doa=5.0)
         weight_dict = {'loss_class': 2.0, 'loss_doa': 5.0}
 
-        if torch.cuda.device_count()>1:
+        if torch.cuda.device_count() > 1:
             print("Let's use", torch.cuda.device_count(), "GPUs!")
             model = nn.DataParallel(model)
         model.to(device)
@@ -156,7 +157,8 @@ def main(argv):
         # Dump results in DCASE output format for calculating final scores
         # ----------------------------------------------
         # 生成带时间戳的DCASE格式输出文件夹
-        dcase_output_folder = os.path.join(params["save_dir"], unique_name,params['dcase_output_dir'], strftime("%Y%m%d%H%M%S", gmtime()))
+        dcase_output_folder = os.path.join(params["save_dir"], unique_name, params['dcase_output_dir'],
+                                           strftime("%Y%m%d%H%M%S", gmtime()))
         # ----------------------------------------------
         # 验证集结果输出文件夹
         dcase_output_val_folder = os.path.join(dcase_output_folder, 'val')
@@ -165,12 +167,12 @@ def main(argv):
         print('Dumping recording-wise val results in: {}'.format(dcase_output_val_folder))
 
         # Initialize evaluation metric class
-        score_obj = ComputeSELDResults(params)   # 初始化SELD指标计算对象（用于计算ER、F值、定位误差等）
+        score_obj = ComputeSELDResults(params)  # 初始化SELD指标计算对象（用于计算ER、F值、定位误差等）
 
         # start training
         best_val_epoch = -1
         best_ER, best_F, best_LE, best_LR, best_seld_scr = 1., 0., 180., 0., 9999
-        patience_cnt = 0   # 早停计数器（记录连续未提升的epoch数）
+        patience_cnt = 0  # 早停计数器（记录连续未提升的epoch数）
 
         nb_epoch = 2 if params['quick_test'] else params['nb_epochs']
         if params['lr'] is None:  # only base_lr is specified  # 若未指定学习率，根据batch_size和基础学习率计算
@@ -180,12 +182,13 @@ def main(argv):
             print(">>> Initialize Optimizer with Layer-wise Learning Rate for DETR")
 
             base_lr = params['lr']
-            backbone_lr = base_lr   # Backbone 降速 (例如 1e-4)
+            backbone_lr = base_lr * 0.1  # Backbone 降速 (例如 1e-4)
             head_lr = base_lr  # Head 全速 (例如 1e-3)
 
             # 2. 定义 Backbone 的关键词 (CST-former 原有部分)
             # 只要参数名包含这些词，就认为是 Backbone
-            detr_keywords = ["query_generator", "decoder", "ffn", "positional_encoding"]
+            detr_keywords = ["query_generator", "decoder", "ffn", "positional_encoding", "enc_score_head",
+                             "enc_doa_head", "ref_point_head", "pos_trans_norm"]
 
             # 3. 筛选参数
             backbone_params = []
@@ -232,16 +235,15 @@ def main(argv):
                 params['lr'] = params['blr'] * params['batch_size'] / 256
             optimizer = optim.Adam(model.parameters(), lr=params['lr'])
 
-
         # loss preparation
         if params['multi_accdoa'] is True:
             if params['use_detr'] is True:
                 criterion = SetCriterion(
-                                num_classes=13,
-                                matcher=matcher,
-                                weight_dict=weight_dict,
-                                losses=['loss_class', 'loss_doa'],
-                                eos_coef=0.6  # 'no_event' 类的权重
+                    num_classes=13,
+                    matcher=matcher,
+                    weight_dict=weight_dict,
+                    losses=['loss_class', 'loss_doa'],
+                    eos_coef=0.45  # 'no_event' 类的权重
                 ).to(device)
             else:
                 criterion = MSELoss_ADPIT()  # 使用自定义的MSELoss_ADPIT损失函数
@@ -268,7 +270,7 @@ def main(argv):
             start_time = time.time()
             if params['use_detr']:
                 train_loss, learning_rate = train_detr_epoch(data_gen_train, optimizer, model, criterion,
-                                                        params, device, epoch_cnt)
+                                                             params, device, epoch_cnt)
             else:
                 train_loss, learning_rate, = train_epoch(data_gen_train, optimizer, model, criterion,
                                                          params, device, epoch_cnt)  # 执行训练epoch，返回训练损失和当前学习率
@@ -331,13 +333,13 @@ def main(argv):
             )
 
             log_stats = {'epoch': epoch_cnt,
-                         'lr':lr_str,
-                        'train_loss': train_loss,
+                         'lr': lr_str,
+                         'train_loss': train_loss,
                          'valid_loss': val_loss,
                          'val_ER': val_ER, 'val_F': val_F, 'val_LE': val_LE, 'val_LR': val_LR,
-                         'val_seld_scr': val_seld_scr,}
+                         'val_seld_scr': val_seld_scr, }
 
-            with open(os.path.join(dcase_output_folder, "log.txt"), mode="a", encoding="utf-8") as f:
+            with open(os.path.join(dcase_output_folder, "log_finetune.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
             if params['use_detr'] and len(optimizer.param_groups) > 1:
@@ -348,9 +350,9 @@ def main(argv):
 
             train_loss_rec, valid_loss_rec, valid_seld_scr_rec, valid_ER_rec, valid_F_rec, valid_LE_rec, valid_LR_rec, learning_rate_rec \
                 = draw_loss(dcase_output_folder, epoch_cnt, best_val_epoch, current_lr_to_draw,
-                                 train_loss, val_loss, val_seld_scr,val_ER, val_F, val_LE, val_LR,
-                                 train_loss_rec, valid_loss_rec, valid_seld_scr_rec,
-                                 valid_ER_rec, valid_F_rec, valid_LE_rec, valid_LR_rec, learning_rate_rec)
+                            train_loss, val_loss, val_seld_scr, val_ER, val_F, val_LE, val_LR,
+                            train_loss_rec, valid_loss_rec, valid_seld_scr_rec,
+                            valid_ER_rec, valid_F_rec, valid_LE_rec, valid_LR_rec, learning_rate_rec)
 
             if patience_cnt > params['patience']:
                 break
