@@ -5,7 +5,7 @@ from scipy.optimize import linear_sum_assignment
 
 
 class DETR_SELD_Head(nn.Module):
-    def __init__(self,  num_classes: int = 13, num_queries: int = 6, embed_dim: int = 64):
+    def __init__(self,  num_classes: int = 13, num_queries: int = 8, embed_dim: int = 128):
         super().__init__()
         self.num_classes = num_classes  # K = 13
         self.num_queries = num_queries  # N = 6

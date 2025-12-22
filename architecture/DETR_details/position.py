@@ -60,7 +60,7 @@ class PositionalEncoding(nn.Module):
 
 
 class SELDQueryGenerator(nn.Module):
-    def __init__(self, num_frames=50, num_queries_per_frame=6, d_model=64, max_T=50, max_F=16):
+    def __init__(self, num_frames=50, num_queries_per_frame=8, d_model=128, max_T=50, max_F=16):
         super().__init__()
         self.num_frames = num_frames
         self.num_queries_per_frame = num_queries_per_frame

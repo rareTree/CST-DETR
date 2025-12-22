@@ -22,6 +22,7 @@ from utility.train_epoch import train_epoch as train_epoch
 from utility.train_detr_epoch import train_detr_epoch
 from utility.loss_adpit import MSELoss_ADPIT
 from architecture.DETR_details.DCST_loss import HungarianMatcher, SetCriterion
+from utility.lr_sched import adjust_learning_rate
 
 
 def main(argv):
@@ -182,7 +183,7 @@ def main(argv):
             print(">>> Initialize Optimizer with Layer-wise Learning Rate for DETR")
 
             base_lr = params['lr']
-            backbone_lr = base_lr * 0.2  # Backbone 降速 (例如 1e-4)
+            backbone_lr = base_lr   # Backbone 降速 (例如 1e-4)
             head_lr = base_lr  # Head 全速 (例如 1e-3)
 
             # 2. 定义 Backbone 的关键词 (CST-former 原有部分)
@@ -212,7 +213,7 @@ def main(argv):
                 {"params": head_params, "lr": head_lr}
             ]
 
-            optimizer = optim.Adam(param_groups)
+            optimizer = optim.AdamW(param_groups, weight_decay=1e-4)
             print(f"    Backbone LR: {backbone_lr} (Params: {len(backbone_params)})")
             print(f"    Head LR:     {head_lr} (Params: {len(head_params)})")
 
@@ -264,6 +265,11 @@ def main(argv):
         else:
             learning_rate_rec = np.zeros([params["nb_epochs"]])
         for epoch_cnt in range(nb_epoch):  # 遍历每个训练epoch
+            if params['lr_scheduler'] and epoch_cnt < params['warmup_epochs']:
+                # 在 Warmup 期间，强制覆盖优化器的 LR
+                # 这会计算当前 epoch 应该用的 LR (线性增长) 并赋值给 optimizer
+                current_lr = adjust_learning_rate(optimizer, epoch_cnt, params)
+                print(f"  [Warmup] Epoch {epoch_cnt}: LR set to {current_lr:.8f}")
             # ---------------------------------------------------------------------
             # TRAINING
             # ---------------------------------------------------------------------
@@ -353,6 +359,13 @@ def main(argv):
                             train_loss, val_loss, val_seld_scr, val_ER, val_F, val_LE, val_LR,
                             train_loss_rec, valid_loss_rec, valid_seld_scr_rec,
                             valid_ER_rec, valid_F_rec, valid_LE_rec, valid_LR_rec, learning_rate_rec)
+
+            if params['use_detr'] and scheduler is not None:
+                if epoch_cnt >= params['warmup_epochs']:
+                    scheduler.step(val_seld_scr)  # 正常调度
+                else:
+                    # Warmup 期间，不让 Scheduler 乱动 (或者 step 但忽略结果)
+                    pass
 
             if patience_cnt > params['patience']:
                 break

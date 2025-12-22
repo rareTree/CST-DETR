@@ -79,7 +79,7 @@ def get_params(argv='1'):
         lr_scheduler=False,
         lr_by_epoch=False,
         lr_ramp=False,
-        lr=5e-5,
+        lr=1e-4,
         min_lr=1e-6,
         blr=1e-3,
         warmup_epochs=5,
@@ -89,8 +89,8 @@ def get_params(argv='1'):
         lad_doa_thresh=20,
 
         # DETR
-        nb_max_obj=10,
-        d_model=64,
+        nb_max_obj=8,
+        d_model=128,
         num_decoder_layers=6,
         return_intermediate=True,
         use_detr=True,
