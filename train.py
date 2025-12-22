@@ -182,7 +182,7 @@ def main(argv):
             print(">>> Initialize Optimizer with Layer-wise Learning Rate for DETR")
 
             base_lr = params['lr']
-            backbone_lr = base_lr * 0.1  # Backbone 降速 (例如 1e-4)
+            backbone_lr = base_lr * 0.2  # Backbone 降速 (例如 1e-4)
             head_lr = base_lr  # Head 全速 (例如 1e-3)
 
             # 2. 定义 Backbone 的关键词 (CST-former 原有部分)
@@ -243,7 +243,7 @@ def main(argv):
                     matcher=matcher,
                     weight_dict=weight_dict,
                     losses=['loss_class', 'loss_doa'],
-                    eos_coef=0.45  # 'no_event' 类的权重
+                    eos_coef=0.55  # 'no_event' 类的权重
                 ).to(device)
             else:
                 criterion = MSELoss_ADPIT()  # 使用自定义的MSELoss_ADPIT损失函数
