@@ -3,7 +3,7 @@ import torch.nn as nn
 from einops import rearrange
 
 class CST_attention(torch.nn.Module):
-    def __init__(self, temp_embed_dim, params):
+    def __init__(self, temp_embed_dim, params, kernel_size=None):
         super().__init__()
         self.nb_mel_bins = params['nb_mel_bins']  # 梅尔频谱的频率bin数量
         self.ChAtten_dca = params['ChAtten_DCA']  # 是否使用DCA（Divided Channel Attention）通道注意力
@@ -26,10 +26,16 @@ class CST_attention(torch.nn.Module):
 
         # Channel attention w. Unfolded Local Embedding (ULE) ----------------------------------------------#
         if self.ChAtten_ule:
-            # 根据时间池化位置设置补丁大小（t_pooling_loc='end'时补丁时间维度为25，否则为10）
-            self.patch_size_t = 25 if params['t_pooling_loc']=='end' else 10
-            self.patch_size_f = 4  # 补丁频率维度固定为4
-            self.patch_size = (self.patch_size_t, self.patch_size_f)
+            # --- 核心修改开始 ---
+            # 如果传入了特定的 kernel_size (tuple), 就直接使用
+            if kernel_size is not None:
+                self.patch_size = kernel_size  # (T, F)
+                self.patch_size_t, self.patch_size_f = self.patch_size
+            else:
+                # 否则使用旧的默认逻辑 (兼容性保留)
+                self.patch_size_t = 25 if params['t_pooling_loc'] == 'end' else 10
+                self.patch_size_f = 4
+                self.patch_size = (self.patch_size_t, self.patch_size_f)
             # 计算频率维度和时间维度的大小（基于池化后的特征）
             self.freq_dim = int(self.nb_mel_bins / torch.prod(torch.Tensor(params['f_pool_size'])))
             self.temp_dim = 250 if params['t_pooling_loc']=='end' else 50
@@ -275,11 +281,19 @@ class CST_encoder(torch.nn.Module):
         self.nb_ch = 7
         n_layers = params['nb_self_attn_layers']
 
-        self.block_list = nn.ModuleList([CST_attention(
-            temp_embed_dim = temp_embed_dim,
-            params=params
-        ) for _ in range(n_layers)]
-        )
+        msule_kernels = [(25, 4), (10, 4), (5, 4), (5, 2)]
+        for i in range(n_layers):
+            # 获取当前层的 kernel_size，如果层数超过列表长度，则沿用最后一个
+            current_kernel = msule_kernels[i] if i < len(msule_kernels) else msule_kernels[-1]
+
+            # 打印一下配置，让你放心
+            print(f"CST Layer {i + 1}/{n_layers}: MSULE Kernel set to {current_kernel}")
+
+            self.block_list.append(CST_attention(
+                temp_embed_dim=temp_embed_dim,
+                params=params,
+                kernel_size=current_kernel  # 传入动态核
+            ))
 
     def forward(self, x):
         B, C, T, F = x.size()

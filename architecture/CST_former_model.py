@@ -67,13 +67,13 @@ class CST_former(torch.nn.Module):
         # 3. 坐标 -> 位置编码 的映射 MLP (Refinement 核心)
         # 将 3维坐标 映射回 64维 Pos Embedding
         self.ref_point_head = nn.Sequential(
-            nn.Linear(3, 64),
+            nn.Linear(3, 128),
             nn.ReLU(),
-            nn.Linear(64, 64)
+            nn.Linear(64, 128)
         )
-        self.pos_trans_norm = nn.LayerNorm(64)  # 防止梯度爆炸
-        self.decoder_layer = TransformerDecoderLayer(64, 4, 256)
-        self.decoder_norm = nn.LayerNorm(64)
+        self.pos_trans_norm = nn.LayerNorm(128)  # 防止梯度爆炸
+        self.decoder_layer = TransformerDecoderLayer(128, 4, 256)
+        self.decoder_norm = nn.LayerNorm(128)
         self.decoder = TransformerDecoder(self.decoder_layer, 6, self.decoder_norm,
                                           return_intermediate=params['return_intermediate'])
         self.ffn = DETR_SELD_Head()
@@ -127,9 +127,14 @@ class CST_former(torch.nn.Module):
             print("=================== attention ===================")
         # 经过注意力阶段（CST_encoder或CMT_block），融合通道-频谱-时间特征
         x = self.attention_stage(x)
+        # 如果时间池化在末尾，应用池化层进一步降低维度
+        if self.t_pooling_loc == 'end':
+            x = self.t_pooling(x)
         x = rearrange(x, 'b t (f c) -> b c t f', f=16).contiguous()
         if self.print_result:
             print(f"x after attention(x.size):{x.shape}")
+
+
 
         if self.print_result:
             print("=================== DETR ===================")
@@ -226,12 +231,6 @@ class CST_former(torch.nn.Module):
 
             # E. 收集输出
             outputs_list.append(layer_predictions)
-
-
-
-        # 如果时间池化在末尾，应用池化层进一步降低维度
-        if self.t_pooling_loc == 'end':
-            x = self.t_pooling(x)
 
 
         if self.print_result:

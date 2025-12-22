@@ -9,9 +9,9 @@ def get_params(argv='1'):
     params = dict(
         quick_test=False,  # To do quick test. Trains/test on small subset of dataset, and # of epochs
 
-        finetune_mode=True,
+        finetune_mode=False,
         # Finetune on existing model, requires the pretrained model path set - pretrained_model_weights
-        pretrained_model_weights='output/2023/33_1_dev_split0_multiaccdoa_foa/models_test_12.21/model.h5',
+        pretrained_model_weights='output/2023/33_1_dev_split0_multiaccdoa_foa/models_test_12.21_1/model.h5',
 
         # INPUT PATHnum
         dataset_dir='./data/2023DCASE_data/',  # Base folder containing the foa/mic and metadata folders
@@ -20,7 +20,7 @@ def get_params(argv='1'):
         feat_label_dir='./data/feature_labels_2023/',  # Directory to dump extracted features and labels
 
         save_dir='output/2023',  # 'output/2022', 'output/2023'
-        model_dir='models_test_12.21_1/',  # Dumps the trained models and training curves in this folder
+        model_dir='models_test_12.22_large/',  # Dumps the trained models and training curves in this folder
         dcase_output_dir='results/',
         # recording-wise results are dumped in this path.
 
@@ -58,14 +58,14 @@ def get_params(argv='1'):
         label_sequence_length=50,  # Feature sequence length
         batch_size=128,  # Batch size0
         dropout_rate=0.05,  # Dropout rate, constant for all layers
-        nb_cnn2d_filt=64,  # Number of CNN nodes, constant for each layer
-        f_pool_size=[4, 4, 2],
-        t_pooling_loc='front',
+        nb_cnn2d_filt=128,  # Number of CNN nodes, constant for each layer
+        f_pool_size=[1, 2, 2],
+        t_pooling_loc='end',
         # CNN frequency pooling, length of list = number of CNN layers, list value = pooling per layer
 
         self_attn=True,
         nb_heads=8,
-        nb_self_attn_layers=2,
+        nb_self_attn_layers=4,
 
         nb_rnn_layers=2,
         rnn_size=128,
@@ -201,6 +201,29 @@ def get_params(argv='1'):
         params['lr_by_epoch'] = True
         params['lr_by_epoch_stay_epoch'] = 200  # 150
         params['nb_epochs'] = 500
+        params['batch_size'] = 4  # 256
+
+        params['FreqAtten'] = True
+        params['ChAtten_ULE'] = True
+        params['CMT_block'] = True
+
+        params["f_pool_size"] = [1, 2, 2]
+        params['t_pool_size'] = [1, 1, 1]
+
+    elif argv == '999':
+        print("QUICK TEST MODE\n")
+        params['quick_test'] = True
+
+    elif argv == '1000':
+        print("[CST-former: Unfolded Local Embedding] FOA + Multi-ACCDOA + CST Unfold + CMT (S dim : 16)\n")
+        params['dataset'] = 'foa'
+        params['multi_accdoa'] = True
+
+        params['baseline'] = False
+        params['lr_scheduler'] = True
+        params['lr_by_epoch'] = True
+        params['lr_by_epoch_stay_epoch'] = 200  # 150
+        params['nb_epochs'] = 0
         params['batch_size'] = 32  # 256
 
         params['FreqAtten'] = True
@@ -209,11 +232,6 @@ def get_params(argv='1'):
 
         params["f_pool_size"] = [1, 2, 2]
         params['t_pool_size'] = [1, 1, params['feature_label_resolution']]
-
-    elif argv == '999':
-        print("QUICK TEST MODE\n")
-        params['quick_test'] = True
-
     else:
         print('ERROR: unknown argument {}'.format(argv))
         exit()
