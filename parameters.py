@@ -52,12 +52,12 @@ def get_params(argv='1'):
         CMT_block=False,  # Use of LPU & IRFNN
         CMT_split=False,  # Apply LPU & IRFNN on S, T attention layers independently
         multi_accdoa=False,  # False - Single-ACCDOA or True - Multi-ACCDOA
-        thresh_unify=15,  # Required for Multi-ACCDOA only. Threshold of unification for inference in degrees.
+        thresh_unify=20,  # Required for Multi-ACCDOA only. Threshold of unification for inference in degrees.
 
         # DNN MODEL PARAMETERS
         label_sequence_length=50,  # Feature sequence length
         batch_size=128,  # Batch size0
-        dropout_rate=0.05,  # Dropout rate, constant for all layers
+        dropout_rate=0.1,  # Dropout rate, constant for all layers
         nb_cnn2d_filt=128,  # Number of CNN nodes, constant for each layer
         f_pool_size=[1, 2, 2],
         t_pooling_loc='end',
@@ -87,6 +87,8 @@ def get_params(argv='1'):
         # METRIC
         average='macro',  # Supports 'micro': sample-wise average and 'macro': class-wise average
         lad_doa_thresh=20,
+
+        use_vtm_loss=False,
 
         # DETR
         nb_max_obj=8,

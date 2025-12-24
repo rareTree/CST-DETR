@@ -262,6 +262,8 @@ class DataGenerator(object):
         # 如果是其他格式，直接跳过 ACS
         do_acs = (self._nb_ch == 7)
 
+        # Mel 通道 (幅度，无符号)
+        idx_mel_y, idx_mel_z, idx_mel_x = 1, 2, 3
         # 通道索引定义
         idx_iv_y, idx_iv_z, idx_iv_x = 4, 5, 6
         # 标签坐标索引
@@ -272,6 +274,27 @@ class DataGenerator(object):
         # ---------------------------------------------------------------------
         if do_acs:
             for b in range(batch_size):
+                if np.random.random() < 0.5:
+                    # 1. 交换 Mel 通道 (物理能量转移)
+                    # 注意：Mel 是正数，直接交换数值，不需要变符号
+                    temp_mel_y = feat[b, idx_mel_y, :, :].copy()
+                    feat[b, idx_mel_y, :, :] = feat[b, idx_mel_x, :, :]
+                    feat[b, idx_mel_x, :, :] = temp_mel_y
+
+                    # 2. 交换 IV 通道 (矢量方向转移)
+                    # 物理规则：逆时针旋转90度相当于 (x,y) -> (-y, x)
+                    # 这里我们做一个简单的对角线镜像交换 (x,y) -> (y,x)，配合后面的随机翻转可以覆盖所有旋转
+                    temp_iv_y = feat[b, idx_iv_y, :, :].copy()
+                    feat[b, idx_iv_y, :, :] = feat[b, idx_iv_x, :, :]
+                    feat[b, idx_iv_x, :, :] = temp_iv_y
+
+                    # 3. 交换标签 (Label)
+                    if self._multi_accdoa:
+                        temp_lbl_y = label[b, :, :, idx_lbl_y, :].copy()
+                        label[b, :, :, idx_lbl_y, :] = label[b, :, :, idx_lbl_x, :]
+                        label[b, :, :, idx_lbl_x, :] = temp_lbl_y
+
+
                 # --- A. 50% 概率翻转 Y 轴 (左右镜像) ---
                 # 物理含义: Azimuth -> -Azimuth
                 if np.random.random() < 0.5:
@@ -319,7 +342,13 @@ class DataGenerator(object):
                 T = feat.shape[2]
                 t_width = np.random.randint(1, int(T * 0.15))  # 最多遮挡 15%
                 t_start = np.random.randint(0, T - t_width)
+                # 掩盖特征
                 feat[b, :, t_start:t_start + t_width, :] = 0.0
+                # 掩盖标签
+                if self._multi_accdoa:
+                    label[b, t_start:t_start + t_width, :, :, :] = 0.0
+                else:
+                    label[b, t_start:t_start + t_width, :] = 0.0
 
         return feat, label
 

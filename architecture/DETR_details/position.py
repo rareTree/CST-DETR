@@ -5,7 +5,7 @@ from einops import rearrange
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, max_T=100, max_F=32):
+    def __init__(self, max_T=150, max_F=32):
         """
         适配CST-former的双维度（时间+频率）位置编码
         Args:
@@ -20,7 +20,6 @@ class PositionalEncoding(nn.Module):
         """生成1D正弦余弦位置编码（时间或频率）"""
         position = torch.arange(max_len, device=device).unsqueeze(1)  # [max_len, 1]
 
-        # ★★★ 修改点 1：使用 math.log 避免在 GPU 上创建标量 tensor ★★★
         div_term = torch.exp(torch.arange(0, d_model, 2, device=device).float() * (-math.log(10000.0) / d_model))
 
         pe = torch.zeros(max_len, d_model, device=device)  # [max_len, d_model]

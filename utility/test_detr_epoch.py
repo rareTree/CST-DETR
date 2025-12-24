@@ -28,7 +28,7 @@ def test_detr_epoch(data_generator, model, criterion, dcase_output_folder, param
             # 趋势显示 0.4 比 0.5 好，说明我们需要更高的 Recall
             # 这一把直接试 0.35，冲击 0.38 大关
             pred_scores = pred_logits.softmax(dim=-1)
-            confidence_threshold = 0.35
+            confidence_threshold = 0.4
 
             max_probs, pred_classes = pred_scores.max(dim=-1)
             bg_class_idx = params['unique_classes']
