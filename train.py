@@ -244,7 +244,8 @@ def main(argv):
                     matcher=matcher,
                     weight_dict=weight_dict,
                     losses=['loss_class', 'loss_doa'],
-                    eos_coef=0.6  # 'no_event' 类的权重
+                    eos_coef=0.6,  # 'no_event' 类的权重
+                    use_vtm_loss=params['use_vtm_loss'],
                 ).to(device)
             else:
                 criterion = MSELoss_ADPIT()  # 使用自定义的MSELoss_ADPIT损失函数

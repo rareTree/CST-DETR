@@ -46,12 +46,16 @@ class HungarianMatcher(nn.Module):
 
 
 class SetCriterion(nn.Module):
-    def __init__(self, num_classes, matcher, weight_dict, losses, eos_coef=0.1):
+    def __init__(self, num_classes, matcher, weight_dict, losses, eos_coef=0.1, use_vtm_loss=False, vtm_penalty=3.0):
         super().__init__()
         self.num_classes = num_classes
         self.matcher = matcher
         self.weight_dict = weight_dict
         self.losses = losses
+
+        # 保存 VTM 配置
+        self.use_vtm_loss = use_vtm_loss
+        self.vtm_penalty = vtm_penalty
 
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[-1] = eos_coef
@@ -92,7 +96,42 @@ class SetCriterion(nn.Module):
         pred_logits_flat = outputs_flat['pred_logits'].flatten(0, 1)
         target_classes_flat = target_classes_o.flatten(0, 1)
 
-        loss_class = F.cross_entropy(pred_logits_flat, target_classes_flat, weight=self.empty_weight)
+        # A. 首先计算不缩减(reduction='none')的基础Loss
+        # 这样我们能拿到每一个样本单独的Loss值
+        # 注意：这里已经包含了 self.empty_weight (eos_coef) 的处理
+        raw_ce_loss = F.cross_entropy(pred_logits_flat, target_classes_flat,
+                                      weight=self.empty_weight, reduction='none')
+
+        # B. 判断是否应用 VTM 惩罚
+        if self.use_vtm_loss:
+            # 1. 计算每个类别的预测概率
+            probs = pred_logits_flat.softmax(dim=-1)
+
+            # 2. 拿到每个样本对应“真实标签类别”的概率
+            # gather: 从 [Total, Classes] 中取出 Target 对应的那一列概率
+            target_probs = probs.gather(1, target_classes_flat.unsqueeze(1)).squeeze(1)
+
+            # 3. 定义“犹豫的正样本”
+            # 条件1: 是正样本 (Target 不等于 背景类索引 self.num_classes)
+            is_positive = (target_classes_flat != self.num_classes)
+            # 条件2: 信心不足 (Target 对应概率 < 0.5)
+            is_hesitant = (target_probs < 0.5)
+
+            # 4. 需要惩罚的索引
+            needs_penalty = is_positive & is_hesitant
+
+            # 5. 应用惩罚权重
+            # 创建一个全 1 的权重向量
+            vtm_weights = torch.ones_like(raw_ce_loss)
+            # 把需要惩罚的地方设为 3.0 (vtm_penalty)
+            vtm_weights[needs_penalty] = self.vtm_penalty
+
+            # 6. 加权并求平均
+            loss_class = (raw_ce_loss * vtm_weights).mean()
+
+        else:
+            # 如果不开启 VTM，直接求平均 (保持原逻辑)
+            loss_class = raw_ce_loss.mean()
 
         # 6. 计算 DOA Loss
         pred_doa_matched = outputs_flat['pred_doa'][src_idx]
