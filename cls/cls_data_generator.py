@@ -333,7 +333,7 @@ class DataGenerator(object):
             # 频率掩码 (Freq Masking)
             if np.random.random() < 0.5:
                 F = feat.shape[3]
-                f_width = np.random.randint(1, int(F * 0.15))  # 最多遮挡 15%
+                f_width = np.random.randint(1, int(F * 0.08))  # 最多遮挡 8%
                 f_start = np.random.randint(0, F - f_width)
                 feat[b, :, :, f_start:f_start + f_width] = 0.0
 

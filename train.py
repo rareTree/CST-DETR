@@ -52,7 +52,7 @@ def main(argv):
 
     # ---------------------------------------------- (For Reproducibility)
     # fix the seed for reproducibility
-    seed = 2023
+    seed = 2025
     os.environ['PYTHONHASHSEED'] = str(seed)
     os.environ['TF_DETERMINISTIC_OPS'] = '1'
     torch.manual_seed(seed)
@@ -66,7 +66,7 @@ def main(argv):
     torch.autograd.set_detect_anomaly(True)
 
     # use parameter set defined by user
-    task_id = '33' if len(argv) < 2 else argv[1]
+    task_id = '1000' if len(argv) < 2 else argv[1]
     params = parameters.get_params(task_id)
 
     job_id = 1 if len(argv) < 3 else argv[-1]
@@ -118,6 +118,7 @@ def main(argv):
         )
         cls_feature_class.create_folder(os.path.join(params['save_dir'], unique_name, params['model_dir']))
         model_name = os.path.join(params['save_dir'], unique_name, params['model_dir'], 'model.h5')
+        latest_model_name = os.path.join(params['save_dir'], unique_name, params['model_dir'], 'model_latest.h5')
         print("unique_name: {}\n".format(unique_name))
         # ----------------------------------------------
 
@@ -135,8 +136,8 @@ def main(argv):
         # Collect i/o data size and load model configuration
         data_in, data_out = data_gen_train.get_data_sizes()
         model = model_architecture.CST_former(data_in, data_out, params)
-        matcher = HungarianMatcher(cost_class=2.0, cost_doa=5.0)
-        weight_dict = {'loss_class': 2.0, 'loss_doa': 5.0}
+        matcher = HungarianMatcher(cost_class=4.0, cost_doa=1.0)
+        weight_dict = {'loss_class': 8.0, 'loss_doa': 2.0}
 
         if torch.cuda.device_count() > 1:
             print("Let's use", torch.cuda.device_count(), "GPUs!")
@@ -224,7 +225,7 @@ def main(argv):
                 optimizer,
                 mode='min',
                 factor=0.5,  # 每次降速一半 (例如 0.001 -> 0.0005)
-                patience=50,  # 忍耐 20 个 epoch
+                patience=20,  # 忍耐 20 个 epoch
                 verbose=True,
                 min_lr=1e-6
             )
@@ -244,7 +245,7 @@ def main(argv):
                     matcher=matcher,
                     weight_dict=weight_dict,
                     losses=['loss_class', 'loss_doa'],
-                    eos_coef=0.6,  # 'no_event' 类的权重
+                    eos_coef=0.5,  # 'no_event' 类的权重
                     use_vtm_loss=params['use_vtm_loss'],
                 ).to(device)
             else:
@@ -266,11 +267,32 @@ def main(argv):
         else:
             learning_rate_rec = np.zeros([params["nb_epochs"]])
         for epoch_cnt in range(nb_epoch):  # 遍历每个训练epoch
-            if params['lr_scheduler'] and epoch_cnt < params['warmup_epochs']:
-                # 在 Warmup 期间，强制覆盖优化器的 LR
-                # 这会计算当前 epoch 应该用的 LR (线性增长) 并赋值给 optimizer
-                current_lr = adjust_learning_rate(optimizer, epoch_cnt, params)
-                print(f"  [Warmup] Epoch {epoch_cnt}: LR set to {current_lr:.8f}")
+            if params['lr_scheduler'] and epoch_cnt <= params['warmup_epochs']:
+                warmup_ratio = epoch_cnt / float(params['warmup_epochs'])
+                if warmup_ratio < 1e-6: warmup_ratio = 1e-6  # 防止除0
+
+                if params['use_detr'] and len(optimizer.param_groups) > 1:
+                    # 如果是 DETR 分层模式，分别缩放
+                    # group[0] 是 Backbone, group[1] 是 Head
+                    # 注意：这里需要用到我们在循环外定义的 backbone_lr 和 head_lr 变量
+                    # 如果它们未定义（比如非DETR模式），代码会报错，所以加了上面的判断
+
+                    # 重新计算当前轮次的目标 LR
+                    cur_backbone_lr = backbone_lr * warmup_ratio
+                    cur_head_lr = head_lr * warmup_ratio
+
+                    optimizer.param_groups[0]['lr'] = cur_backbone_lr
+                    optimizer.param_groups[1]['lr'] = cur_head_lr
+
+                    print(
+                        f"  [Warmup] Epoch {epoch_cnt}: Backbone LR set to {cur_backbone_lr:.8f}, Head LR set to {cur_head_lr:.8f}")
+
+                else:
+                    # 原有逻辑 (非 DETR 或 单一 LR)
+                    current_lr = adjust_learning_rate(optimizer, epoch_cnt, params)
+                    print(f"  [Warmup] Epoch {epoch_cnt}: LR set to {current_lr:.8f}")
+
+
             # ---------------------------------------------------------------------
             # TRAINING
             # ---------------------------------------------------------------------
@@ -296,17 +318,13 @@ def main(argv):
             val_ER, val_F, val_LE, val_LR, val_seld_scr, classwise_val_scr = score_obj.get_SELD_Results(
                 dcase_output_val_folder)
 
-            # 只有 DETR 模型，且调度器已初始化时才执行
-            if params['use_detr'] and scheduler is not None:
-                # 将当前的验证分数告诉管家
-                scheduler.step(val_seld_scr)
 
             if len(optimizer.param_groups) > 1:
                 # 分层学习率：显示 "Backbone / Head"
                 lr_backbone = optimizer.param_groups[0]['lr']
                 lr_head = optimizer.param_groups[1]['lr']
                 # 格式：CST学习率 / DETR学习率
-                lr_str = "{:0.6f}/{:0.6f}".format(lr_backbone, lr_head)
+                lr_str = "{:0.8f}/{:0.8f}".format(lr_backbone, lr_head)
                 # 更新 learning_rate 变量为 Head 的 LR (用于画图记录等，保持主要指标)
             else:
                 # 单一学习率
@@ -322,6 +340,9 @@ def main(argv):
                 patience_cnt = 0
             else:
                 patience_cnt += 1
+
+
+            torch.save(model.state_dict(), latest_model_name)
 
             # Print stats
             print(

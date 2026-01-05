@@ -11,7 +11,7 @@ def get_params(argv='1'):
 
         finetune_mode=False,
         # Finetune on existing model, requires the pretrained model path set - pretrained_model_weights
-        pretrained_model_weights='output/2023/33_1_dev_split0_multiaccdoa_foa/models_test_12.21_1/model.h5',
+        pretrained_model_weights='output/2023/1000_7_dev_split0_multiaccdoa_foa/models_finetune_1.4_large/model_latest.h5',
 
         # INPUT PATHnum
         dataset_dir='./data/2023DCASE_data/',  # Base folder containing the foa/mic and metadata folders
@@ -20,7 +20,7 @@ def get_params(argv='1'):
         feat_label_dir='./data/feature_labels_2023/',  # Directory to dump extracted features and labels
 
         save_dir='output/2023',  # 'output/2022', 'output/2023'
-        model_dir='models_test_12.22_large/',  # Dumps the trained models and training curves in this folder
+        model_dir='models_finetune_1.4_large/',  # Dumps the trained models and training curves in this folder
         dcase_output_dir='results/',
         # recording-wise results are dumped in this path.
 
@@ -52,7 +52,7 @@ def get_params(argv='1'):
         CMT_block=False,  # Use of LPU & IRFNN
         CMT_split=False,  # Apply LPU & IRFNN on S, T attention layers independently
         multi_accdoa=False,  # False - Single-ACCDOA or True - Multi-ACCDOA
-        thresh_unify=20,  # Required for Multi-ACCDOA only. Threshold of unification for inference in degrees.
+        thresh_unify=15,  # Required for Multi-ACCDOA only. Threshold of unification for inference in degrees.
 
         # DNN MODEL PARAMETERS
         label_sequence_length=50,  # Feature sequence length
@@ -80,7 +80,7 @@ def get_params(argv='1'):
         lr_by_epoch=False,
         lr_ramp=False,
         lr=1e-4,
-        min_lr=1e-6,
+        min_lr=1e-8,
         blr=1e-3,
         warmup_epochs=5,
 
@@ -224,8 +224,8 @@ def get_params(argv='1'):
         params['baseline'] = False
         params['lr_scheduler'] = True
         params['lr_by_epoch'] = True
-        params['lr_by_epoch_stay_epoch'] = 200  # 150
-        params['nb_epochs'] = 0
+        params['lr_by_epoch_stay_epoch'] = 150  # 150
+        params['nb_epochs'] = 300
         params['batch_size'] = 32  # 256
 
         params['FreqAtten'] = True
@@ -233,7 +233,7 @@ def get_params(argv='1'):
         params['CMT_block'] = True
 
         params["f_pool_size"] = [1, 2, 2]
-        params['t_pool_size'] = [1, 1, params['feature_label_resolution']]
+        params['t_pool_size'] = [1, 1, 1]
     else:
         print('ERROR: unknown argument {}'.format(argv))
         exit()
