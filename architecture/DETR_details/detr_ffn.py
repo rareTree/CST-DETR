@@ -8,14 +8,14 @@ class DETR_SELD_Head(nn.Module):
     def __init__(self,  num_classes: int = 13, num_queries: int = 8, embed_dim: int = 128):
         super().__init__()
         self.num_classes = num_classes  # K = 13
-        self.num_queries = num_queries  # N = 6
-        self.embed_dim = embed_dim  # C_embed = 64
+        self.num_queries = num_queries  # N = 8
+        self.embed_dim = embed_dim  # C_embed = 128
 
         # ... (CST-former 和 DETR Decoder 主体) ...
 
         # 1. 分类头
         # 输出维度必须是 K + 1
-        self.class_head = nn.Linear(embed_dim, self.num_classes + 1)  # -> [64, 14]
+        self.class_head = nn.Linear(embed_dim, self.num_classes)  # -> [64, 14]
 
         # 2. DOA 头
         # 输出维度是 3 (x, y, z)
@@ -29,7 +29,7 @@ class DETR_SELD_Head(nn.Module):
         # 步骤1：调整维度顺序（Q,B,C）→（B,Q,C），批次维度前置
         # 此处torch.Size([1, 300, 32, 64])，只有第一个为1时这么用
         x = x.squeeze(dim=0).permute(1, 0, 2)  # [32, 250, 64]
-        # [B, T*N, K+1]
+        # [B, T*N, K]
         pred_logits = self.class_head(x)
         # [B, T*N, 3]
         pred_doa = self.doa_head(x)
@@ -38,8 +38,8 @@ class DETR_SELD_Head(nn.Module):
 
         B, T = x.shape[0], 50  # 假设 T=50
 
-        # [B, T*N, 14] -> [B, T, N, 14]
-        out_logits = pred_logits.view(B, T, self.num_queries, self.num_classes + 1)
+        # [B, T*N, 13] -> [B, T, N, 13]
+        out_logits = pred_logits.view(B, T, self.num_queries, self.num_classes)
 
         # [B, T*N, 3] -> [B, T, N, 3]
         out_doa = pred_doa.view(B, T, self.num_queries, 3)

@@ -1,11 +1,23 @@
 # 文件名: architecture/DETR_details/DCST_loss.py
-# (标准 GPU 版本)
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 
+
+# -------------------------------------------------------------
+# 1. Varifocal Loss (独立函数)
+# -------------------------------------------------------------
+def varifocal_loss(pred_logits, gt_score, alpha=0.75, gamma=2.0):
+    """
+    pred_logits: [N, K]
+    gt_score:    [N, K] (0~1)
+    """
+    pred_score = pred_logits.sigmoid()
+    weight = alpha * pred_score.pow(gamma) * (1 - gt_score) + gt_score
+    loss = F.binary_cross_entropy_with_logits(pred_logits, gt_score, reduction='none')
+    return (loss * weight).sum(dim=1).mean()
 
 class HungarianMatcher(nn.Module):
     def __init__(self, cost_class: float = 2.0, cost_doa: float = 5.0):
@@ -15,10 +27,10 @@ class HungarianMatcher(nn.Module):
 
     @torch.no_grad()
     def forward(self, outputs, targets):
-        BT, N, _ = outputs["pred_logits"].shape
+        BT, N, K = outputs["pred_logits"].shape
         indices = []
         for i in range(BT):
-            out_prob = outputs["pred_logits"][i].softmax(-1)
+            out_prob = outputs["pred_logits"][i].sigmoid()
             out_doa = outputs["pred_doa"][i]
 
             tgt_labels = targets[i]["labels"]
@@ -45,6 +57,7 @@ class HungarianMatcher(nn.Module):
         return indices
 
 
+
 class SetCriterion(nn.Module):
     def __init__(self, num_classes, matcher, weight_dict, losses, eos_coef=0.1, use_vtm_loss=False, vtm_penalty=3.0):
         super().__init__()
@@ -66,10 +79,10 @@ class SetCriterion(nn.Module):
         内部辅助函数：计算单层的 Loss (分类 + 回归)
         """
         # 1. 整理输出形状
-        # [B, T, N, K+1]
-        B, T, N, _ = pred_logits.shape
+        # [B, T, N, K]
+        B, T, N, K = pred_logits.shape
         outputs_flat = {}
-        outputs_flat['pred_logits'] = pred_logits.reshape(-1, N, self.num_classes + 1)
+        outputs_flat['pred_logits'] = pred_logits.reshape(-1, N, K)
         outputs_flat['pred_doa'] = pred_doa.reshape(-1, N, 3)
 
         # 2. 转换 GT (targets_adpit 已经在 GPU 上)
@@ -84,58 +97,37 @@ class SetCriterion(nn.Module):
         # 4. 获取索引
         src_idx = self._get_src_permutation_idx(indices)
 
-        # 5. 计算分类 Loss
-        target_classes_o = torch.full(outputs_flat['pred_logits'].shape[:2],
-                                      self.num_classes,
-                                      dtype=torch.long,
-                                      device=pred_logits.device)
+        # ================= Loss 计算核心 =================
+        # 展平以便统一处理: [Total_Queries, K]
+        src_logits = outputs_flat['pred_logits'].flatten(0, 1)  # [B*T*N, K]
 
-        target_classes = torch.cat([t["labels"][J] for t, (_, J) in zip(targets_processed, indices)], dim=0)
-        target_classes_o[src_idx] = target_classes
+        # 初始化 Target (全 0)
+        target_score = torch.zeros_like(src_logits)
 
-        pred_logits_flat = outputs_flat['pred_logits'].flatten(0, 1)
-        target_classes_flat = target_classes_o.flatten(0, 1)
+        # 获取匹配到的正样本信息
+        target_classes = torch.cat([t["labels"][J] for t, (_, J) in zip(targets_processed, indices)])
 
-        # A. 首先计算不缩减(reduction='none')的基础Loss
-        # 这样我们能拿到每一个样本单独的Loss值
-        # 注意：这里已经包含了 self.empty_weight (eos_coef) 的处理
-        raw_ce_loss = F.cross_entropy(pred_logits_flat, target_classes_flat,
-                                      weight=self.empty_weight, reduction='none')
-
-        # B. 判断是否应用 VTM 惩罚
-        if self.use_vtm_loss:
-            # 1. 计算每个类别的预测概率
-            probs = pred_logits_flat.softmax(dim=-1)
-
-            # 2. 拿到每个样本对应“真实标签类别”的概率
-            # gather: 从 [Total, Classes] 中取出 Target 对应的那一列概率
-            target_probs = probs.gather(1, target_classes_flat.unsqueeze(1)).squeeze(1)
-
-            # 3. 定义“犹豫的正样本”
-            # 条件1: 是正样本 (Target 不等于 背景类索引 self.num_classes)
-            is_positive = (target_classes_flat != self.num_classes)
-            # 条件2: 信心不足 (Target 对应概率 < 0.5)
-            is_hesitant = (target_probs < 0.5)
-
-            # 4. 需要惩罚的索引
-            needs_penalty = is_positive & is_hesitant
-
-            # 5. 应用惩罚权重
-            # 创建一个全 1 的权重向量
-            vtm_weights = torch.ones_like(raw_ce_loss)
-            # 把需要惩罚的地方设为 3.0 (vtm_penalty)
-            vtm_weights[needs_penalty] = self.vtm_penalty
-
-            # 6. 加权并求平均
-            loss_class = (raw_ce_loss * vtm_weights).mean()
-
-        else:
-            # 如果不开启 VTM，直接求平均 (保持原逻辑)
-            loss_class = raw_ce_loss.mean()
-
-        # 6. 计算 DOA Loss
+        # 计算角度质量
         pred_doa_matched = outputs_flat['pred_doa'][src_idx]
-        target_doa_matched = torch.cat([t['doa'][J] for t, (_, J) in zip(targets_processed, indices)], dim=0)
+        target_doa_matched = torch.cat([t['doa'][J] for t, (_, J) in zip(targets_processed, indices)])
+
+        if len(target_classes) > 0:
+            # Cosine Sim -> Angle Error
+            cos_sim = (pred_doa_matched * target_doa_matched).sum(dim=-1).clamp(-1 + 1e-6, 1 - 1e-6)
+            angle_error = torch.acos(cos_sim) * 180 / 3.14159265
+
+            # Quality: 20度以内线性衰减
+            quality = torch.clamp(1.0 - angle_error / 20.0, min=0.0, max=1.0)
+
+            # 填入 Target
+            # src_idx[0] 是 batch_idx (在 B*T 维度), src_idx[1] 是 query_idx
+            # 展平索引 = batch_idx * N + query_idx
+            flat_indices = src_idx[0] * N + src_idx[1]
+            target_score[flat_indices, target_classes] = quality.type_as(src_logits)
+
+        # VFL Loss
+        loss_class = varifocal_loss(src_logits, target_score)
+        # ===============================================
 
         if pred_doa_matched.shape[0] > 0:
             loss_doa = F.l1_loss(pred_doa_matched, target_doa_matched, reduction="mean")
