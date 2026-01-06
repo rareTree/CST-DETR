@@ -13,7 +13,7 @@ def test_detr_epoch(data_generator, model, criterion, dcase_output_folder, param
     # 置信度阈值 (Confidence Threshold)
     # 高于此分数的预测框才会被保留。
     # 建议范围: 0.3 ~ 0.5。如果虚警(ER)高，调高它；如果召回(LR)低，调低它。
-    confidence_threshold = 0.3
+    confidence_threshold = 0.15
     # ===================================================
 
     with torch.no_grad():

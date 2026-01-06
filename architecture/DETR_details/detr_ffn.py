@@ -1,53 +1,34 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from scipy.optimize import linear_sum_assignment
 
 
 class DETR_SELD_Head(nn.Module):
-    def __init__(self,  num_classes: int = 13, num_queries: int = 8, embed_dim: int = 128):
+    def __init__(self, num_classes: int = 13, num_queries: int = 8, embed_dim: int = 128):
         super().__init__()
-        self.num_classes = num_classes  # K = 13
-        self.num_queries = num_queries  # N = 8
-        self.embed_dim = embed_dim  # C_embed = 128
+        self.num_classes = num_classes
+        self.embed_dim = embed_dim
 
-        # ... (CST-former 和 DETR Decoder 主体) ...
+        # 1. 分类头 (输出 K 类)
+        self.class_head = nn.Linear(embed_dim, self.num_classes)
 
-        # 1. 分类头
-        # 输出维度必须是 K + 1
-        self.class_head = nn.Linear(embed_dim, self.num_classes)  # -> [64, 14]
-
-        # 2. DOA 头
-        # 输出维度是 3 (x, y, z)
-        self.doa_head = nn.Linear(embed_dim, 3)  # -> [64, 3]
+        # 2. DOA 头 (输出 3 维坐标)
+        self.doa_head = nn.Linear(embed_dim, 3)
 
     def forward(self, x):
         """
-        输入：detr_output → [Q=250, B=32, C=64]
-        输出：pred → [B=32, Q=250, 17]（17=激活+DOA+类别）
+        输入：x → [Batch, Sequence_Length, Channel]
+        输出：字典包含 logits 和 doa
         """
-        # 步骤1：调整维度顺序（Q,B,C）→（B,Q,C），批次维度前置
-        # 此处torch.Size([1, 300, 32, 64])，只有第一个为1时这么用
-        x = x.squeeze(dim=0).permute(1, 0, 2)  # [32, 250, 64]
+        # x 已经是 [B, T*N, C] 格式，直接通过 Linear 层即可
+
         # [B, T*N, K]
         pred_logits = self.class_head(x)
+
         # [B, T*N, 3]
         pred_doa = self.doa_head(x)
 
-        # --- Reshape 为 [B, T, N, ...] 格式 ---
-
-        B, T = x.shape[0], 50  # 假设 T=50
-
-        # [B, T*N, 13] -> [B, T, N, 13]
-        out_logits = pred_logits.view(B, T, self.num_queries, self.num_classes)
-
-        # [B, T*N, 3] -> [B, T, N, 3]
-        out_doa = pred_doa.view(B, T, self.num_queries, 3)
-
-        # 打包成字典
         outputs = {
-            'pred_logits': out_logits,
-            'pred_doa': out_doa
+            'pred_logits': pred_logits,
+            'pred_doa': pred_doa
         }
-
         return outputs

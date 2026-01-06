@@ -164,6 +164,22 @@ class SetCriterion(nn.Module):
                 final_loss += loss_class_aux * self.weight_dict['loss_class'] + \
                               loss_doa_aux * self.weight_dict['loss_doa']
 
+        # ==================== 新增：Encoder Loss ====================
+        if 'enc_outputs' in outputs:
+            enc_out = outputs['enc_outputs']
+
+            # 使用同样的匹配和 Loss 逻辑
+            # 注意：因为我们已经把 Encoder 输出 reshape 成了 [B, T, N, C]，
+            # 所以可以直接复用 self.get_loss
+            l_class_enc, l_doa_enc = self.get_loss(enc_out['pred_logits'], enc_out['pred_doa'],
+                                                           targets_processed)
+
+             # 将 Encoder Loss 加入总 Loss
+             # 通常 Encoder 的权重可以和 Decoder 一样
+            final_loss += l_class_enc * self.weight_dict['loss_class'] + \
+                                  l_doa_enc * self.weight_dict['loss_doa']
+        # ============================================================
+
         return final_loss
 
     def convert_adpit_to_set(self, targets_adpit: torch.Tensor):

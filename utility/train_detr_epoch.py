@@ -35,20 +35,20 @@ def train_detr_epoch(data_generator, optimizer, model, criterion, params, device
             # 3. 计算损失 (SetCriterion)
             loss = criterion(output, target)
 
-            # loss = loss / ACCUMULATION_STEPS
+            loss = loss / ACCUMULATION_STEPS
             # 4. 反向传播
             loss.backward()
 
-            # if ((batch_idx + 1) % ACCUMULATION_STEPS == 0) or ((batch_idx + 1) == total_batches):
+            if ((batch_idx + 1) % ACCUMULATION_STEPS == 0) or ((batch_idx + 1) == total_batches):
 
-            # 5. 梯度裁剪
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+                # 5. 梯度裁剪
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
 
-            optimizer.step()
+                optimizer.step()
 
-            optimizer.zero_grad()
+                optimizer.zero_grad()
 
-            # train_loss += loss.item() * ACCUMULATION_STEPS
+            train_loss += loss.item() * ACCUMULATION_STEPS
             train_loss += loss.item()
             nb_train_batches += 1
 

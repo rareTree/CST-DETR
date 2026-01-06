@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import math
 
 from einops import rearrange
 from torch.utils.data.datapipes.utils.decoder import Decoder
@@ -62,7 +63,7 @@ class CST_former(torch.nn.Module):
 
         # [修改 2] 替换所有硬编码的 64 为 embed_dim
         # 1. 评分头
-        self.enc_score_head = nn.Linear(embed_dim, 1)
+        self.enc_score_head = nn.Linear(embed_dim, self.nb_classes)
         # 2. 初始坐标预测头
         self.enc_doa_head = nn.Linear(embed_dim, 3)
         # 3. 坐标 -> 位置编码 的映射 MLP
@@ -88,6 +89,18 @@ class CST_former(torch.nn.Module):
 
         # 初始化模型参数
         self.apply(self._init_weights)
+
+        prior_prob = 0.01
+        bias_value = -math.log((1 - prior_prob) / prior_prob)
+
+        # 1. 修改 Encoder 的分类头
+        if hasattr(self, 'enc_score_head'):
+            torch.nn.init.constant_(self.enc_score_head.bias, bias_value)
+
+        # 2. 修改 Decoder 的分类头 (如果你能访问到的话)
+        # 通常在 self.ffn 内部。如果没有报错，可以尝试加上这句：
+        if hasattr(self.ffn, 'class_head'):
+            torch.nn.init.constant_(self.ffn.class_head.bias, bias_value)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -141,31 +154,60 @@ class CST_former(torch.nn.Module):
             print(f"memory after positional encoding(x.size):{memory.shape}")
 
         # 1. 给 Encoder 的所有特征点打分
-        # memory shape: [B, T, F, 128] -> enc_score_head -> [B, T, F, 1]
+        # memory shape: [B, T, F, 128] -> enc_score_head -> [B, T, F, 13]
         enc_logits = self.enc_score_head(memory)
 
-        # 2. 逐帧筛选
+        # 2. 预测所有点的坐标 (Dense Prediction)
+        # memory: [B, T, F, C] -> enc_doa: [B, T, F, 3]
+        # 注意：这里我们对所有点都预测了 DOA，是为了后面方便取 Top-K
+        enc_doa = self.enc_doa_head(memory)
+
+        # 3. 逐帧筛选 (Top-K)
+        # 现在的 enc_logits 是多分类的，我们需要找到“最大置信度”
+        # 逻辑：先对 13 个类做 Max，得到“这是某个声音的概率”，再选 Top-K
+
+        # [B, T, F, 13] -> [B, T, F] (取每个点最大的类分数)
+        # 注意：这里我们用 Sigmoid 后的分数来排序，还是用 Logits 排序？
+        # 为了数值稳定性，直接用 Logits 的 Max 值排序即可（单调性一致）
+        enc_prob_max = enc_logits.max(dim=-1).values
+
         num_q_per_frame = 8
-        topk_scores, topk_indices = torch.topk(enc_logits, num_q_per_frame, dim=2)
+        topk_scores, topk_indices = torch.topk(enc_prob_max, num_q_per_frame, dim=2)
 
-        # 3. 提取特征 (tgt) 和位置 (pos)
-        expand_indices = topk_indices.expand(-1, -1, -1, memory.shape[-1])
+        # 4. 提取特征 (tgt) 和位置 (pos)
+        # 需要扩展索引维度以匹配特征维度
+        # topk_indices: [B, T, N] -> [B, T, N, C]
+        expand_indices_C = topk_indices.unsqueeze(-1).expand(-1, -1, -1, memory.shape[-1])
+        # topk_indices: [B, T, N] -> [B, T, N, 3]
+        expand_indices_3 = topk_indices.unsqueeze(-1).expand(-1, -1, -1, 3)
+        # topk_indices: [B, T, N] -> [B, T, N, 13]
+        expand_indices_K = topk_indices.unsqueeze(-1).expand(-1, -1, -1, self.nb_classes)
 
-        tgt_frame = torch.gather(memory, 2, expand_indices)
-        pos_frame = torch.gather(pos, 2, expand_indices)
+        tgt_frame = torch.gather(memory, 2, expand_indices_C)
+
+        # Gather Encoder 的预测结果 (用于 Loss 监督)
+        # 选出来的这 8 个点的分类 Logits
+        enc_topk_logits = torch.gather(enc_logits, 2, expand_indices_K)  # [B, T, N, 13]
+        # 选出来的这 8 个点的 DOA
+        enc_topk_doa = torch.gather(enc_doa, 2, expand_indices_3)  # [B, T, N, 3]
+
+        # 5. 准备 Decoder 输入
+        # 这里有一个重要改动：RT-DETR 通常直接用 Encoder 预测的 DOA 作为初始参考点
+        # 而不再需要用 tgt 再过一次 enc_doa_head (虽然你之前的代码是这么做的)
+        # 为了保持你代码的连贯性，我们这里可以让 ref_points 直接等于我们 gather 出来的 enc_topk_doa
 
         # 4. 展平
         tgt = tgt_frame.flatten(1, 2)
-        query_pos = pos_frame.flatten(1, 2)
+        tgt = tgt.transpose(0, 1)
 
         # 5. 预测初始参考点 (DOA)
-        ref_points = self.enc_doa_head(tgt)
+        # 使用 Encoder 预测好的 DOA 作为初始参考点
+        ref_points = enc_topk_doa.flatten(1, 2)  # [B, T*N, 3]
 
-        # 6. 转换维度顺序: [Sequence, Batch, Channel]
-        tgt = tgt.transpose(0, 1)
-        query_pos = query_pos.transpose(0, 1)
-        if self.print_result:
-            print(f"tgt:{tgt.shape}, query_pos:{query_pos.shape}")
+        enc_pos_embed = self.ref_point_head(ref_points)
+        enc_pos_embed = self.pos_trans_norm(enc_pos_embed)
+        current_pos = enc_pos_embed.transpose(0, 1)
+
 
         # Memory 展平并转置
         memory = memory.flatten(1, 2).transpose(0, 1)
@@ -175,7 +217,6 @@ class CST_former(torch.nn.Module):
 
         # --- 迭代坐标细化 ---
         output = tgt
-        current_pos = query_pos
         current_ref_points = ref_points
         outputs_list = []
         for layer_idx, layer in enumerate(self.decoder.layers):
@@ -192,16 +233,24 @@ class CST_former(torch.nn.Module):
                 output_norm = output
 
             # FFN
-            layer_predictions = self.ffn(output_norm.unsqueeze(0))
-
-            pred_doa_layer = layer_predictions['pred_doa'].flatten(1, 2)
+            layer_predictions = self.ffn(output_norm.permute(1, 0, 2))
+            pred_doa_layer = layer_predictions['pred_doa']  # [B, T*N, 3]
 
             if layer_idx < len(self.decoder.layers) - 1:
                 new_ref_points = pred_doa_layer.detach()
                 new_pos_embed = self.ref_point_head(new_ref_points)
                 new_pos_embed = self.pos_trans_norm(new_pos_embed)
                 current_pos = new_pos_embed.transpose(0, 1)
+
                 current_ref_points = new_ref_points
+
+            B_new = B
+            N_new = num_q_per_frame
+            # 动态计算 T (因为可能经过了 Pooling)
+            T_new = layer_predictions['pred_logits'].shape[1] // N_new
+
+            layer_predictions['pred_logits'] = layer_predictions['pred_logits'].reshape(B_new, T_new, N_new, -1)
+            layer_predictions['pred_doa'] = layer_predictions['pred_doa'].reshape(B_new, T_new, N_new, -1)
 
             outputs_list.append(layer_predictions)
 
@@ -215,6 +264,9 @@ class CST_former(torch.nn.Module):
         if self.decoder.return_intermediate:
             outputs['aux_outputs'] = outputs_list[:-1]
 
-        if self.print_result:
-            print(f"outputs:{outputs.keys()}")
+        outputs['enc_outputs'] = {
+            'pred_logits': enc_topk_logits,
+            'pred_doa': enc_topk_doa
+        }
+
         return outputs
