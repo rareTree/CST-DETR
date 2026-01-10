@@ -106,9 +106,11 @@ class SetCriterion(nn.Module):
 
         # 获取匹配到的正样本信息
         target_classes = torch.cat([t["labels"][J] for t, (_, J) in zip(targets_processed, indices)])
+        flat_indices = src_idx[0] * N + src_idx[1]
 
         # 计算角度质量
         pred_doa_matched = outputs_flat['pred_doa'][src_idx]
+        pred_doa_matched = F.normalize(pred_doa_matched, p=2, dim=-1)
         target_doa_matched = torch.cat([t['doa'][J] for t, (_, J) in zip(targets_processed, indices)])
 
         if len(target_classes) > 0:
@@ -116,13 +118,21 @@ class SetCriterion(nn.Module):
             cos_sim = (pred_doa_matched * target_doa_matched).sum(dim=-1).clamp(-1 + 1e-6, 1 - 1e-6)
             angle_error = torch.acos(cos_sim) * 180 / 3.14159265
 
-            # Quality: 20度以内线性衰减
-            quality = torch.clamp(1.0 - angle_error / 20.0, min=0.0, max=1.0)
+
+            # 2. 梯形策略：18度以内满分，18度以外衰减
+            safe_margin = 18.0  # 宽容区阈值
+            max_error = 180.0  # 最大可能误差
+
+            # 计算超出 18 度的部分
+            excess_error = torch.clamp(angle_error - safe_margin, min=0.0)
+
+            # 计算衰减区间的长度 (180 - 18 = 162)
+            decay_range = max_error - safe_margin
+            quality = torch.clamp(1.0 - excess_error / decay_range, min=0.0, max=1.0)
 
             # 填入 Target
             # src_idx[0] 是 batch_idx (在 B*T 维度), src_idx[1] 是 query_idx
             # 展平索引 = batch_idx * N + query_idx
-            flat_indices = src_idx[0] * N + src_idx[1]
             target_score[flat_indices, target_classes] = quality.type_as(src_logits)
 
         # VFL Loss

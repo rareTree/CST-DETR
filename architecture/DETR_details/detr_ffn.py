@@ -25,7 +25,7 @@ class DETR_SELD_Head(nn.Module):
         pred_logits = self.class_head(x)
 
         # [B, T*N, 3]
-        pred_doa = self.doa_head(x)
+        pred_doa = torch.tanh(self.doa_head(x))
 
         outputs = {
             'pred_logits': pred_logits,

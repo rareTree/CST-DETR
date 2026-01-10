@@ -11,7 +11,7 @@ def get_params(argv='1'):
 
         finetune_mode=False,
         # Finetune on existing model, requires the pretrained model path set - pretrained_model_weights
-        pretrained_model_weights='output/2023/1000_7_dev_split0_multiaccdoa_foa/models_finetune_1.4_large/model_latest.h5',
+        pretrained_model_weights='output/2023/1000_20_dev_split0_multiaccdoa_foa/models_finetune_1.4_large/model.h5',
 
         # INPUT PATHnum
         dataset_dir='./data/2023DCASE_data/',  # Base folder containing the foa/mic and metadata folders
@@ -226,7 +226,7 @@ def get_params(argv='1'):
         params['lr_by_epoch'] = True
         params['lr_by_epoch_stay_epoch'] = 200  # 150
         params['nb_epochs'] = 500
-        params['batch_size'] = 16  # 256
+        params['batch_size'] = 1  # 256
 
         params['FreqAtten'] = True
         params['ChAtten_ULE'] = True

@@ -137,7 +137,7 @@ def main(argv):
         data_in, data_out = data_gen_train.get_data_sizes()
         model = model_architecture.CST_former(data_in, data_out, params)
         matcher = HungarianMatcher(cost_class=4.0, cost_doa=1.0)
-        weight_dict = {'loss_class': 8.0, 'loss_doa': 2.0}
+        weight_dict = {'loss_class': 2.0, 'loss_doa': 2.0}
 
         if torch.cuda.device_count() > 1:
             print("Let's use", torch.cuda.device_count(), "GPUs!")
