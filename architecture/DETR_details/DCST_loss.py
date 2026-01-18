@@ -120,7 +120,7 @@ class SetCriterion(nn.Module):
 
 
             # 2. 梯形策略：18度以内满分，18度以外衰减
-            safe_margin = 18.0  # 宽容区阈值
+            safe_margin = 16.0  # 宽容区阈值
             max_error = 180.0  # 最大可能误差
 
             # 计算超出 18 度的部分

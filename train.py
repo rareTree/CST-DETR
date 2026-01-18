@@ -264,6 +264,7 @@ def main(argv):
             learning_rate_rec = np.zeros([params["nb_epochs"], 2])  # 建议改用 zeros
         else:
             learning_rate_rec = np.zeros([params["nb_epochs"]])
+
         for epoch_cnt in range(nb_epoch):  # 遍历每个训练epoch
             if params['lr_scheduler'] and epoch_cnt <= params['warmup_epochs']:
                 warmup_ratio = epoch_cnt / float(params['warmup_epochs'])
