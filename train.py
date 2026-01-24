@@ -225,7 +225,7 @@ def main(argv):
                 optimizer,
                 mode='min',
                 factor=0.5,  # 每次降速一半 (例如 0.001 -> 0.0005)
-                patience=20,  # 忍耐 20 个 epoch
+                patience=30,  # 忍耐 20 个 epoch
                 verbose=True,
                 min_lr=1e-6
             )

@@ -9,7 +9,7 @@ from scipy.optimize import linear_sum_assignment
 # -------------------------------------------------------------
 # 1. Varifocal Loss (独立函数)
 # -------------------------------------------------------------
-def varifocal_loss(pred_logits, gt_score, alpha=0.75, gamma=2.0):
+def varifocal_loss(pred_logits, gt_score, alpha=0.5, gamma=2.0):
     """
     pred_logits: [N, K]
     gt_score:    [N, K] (0~1)
@@ -120,8 +120,8 @@ class SetCriterion(nn.Module):
 
 
             # 2. 梯形策略：18度以内满分，18度以外衰减
-            safe_margin = 16.0  # 宽容区阈值
-            max_error = 180.0  # 最大可能误差
+            safe_margin = 15.0  # 宽容区阈值
+            max_error = 30.0  # 最大可能误差
 
             # 计算超出 18 度的部分
             excess_error = torch.clamp(angle_error - safe_margin, min=0.0)
