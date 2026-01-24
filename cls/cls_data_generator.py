@@ -28,6 +28,11 @@ class DataGenerator(object):
         self._multi_accdoa = params['multi_accdoa']
         self._use_real_imag = params['use_real_imag']
 
+        # 为了复现论文，默认在训练模式下开启
+        self.use_mixup = params.get('use_mixup', True)  # 默认开启 Mixup
+        self.use_frameshift = params.get('use_frameshift', True)  # 默认开启 Frameshift
+        self.use_specaug = True  # 原有的 Masking
+
         self._filenames_list = list()
 
         self._nb_frames_file = 0  # Using a fixed number of frames in feat files. Updated in _get_label_filenames_sizes()
@@ -116,6 +121,72 @@ class DataGenerator(object):
         self._label_batch_seq_len = self._batch_size * self._label_seq_len
 
         return
+
+    def frame_shift(self, feat, label):
+        """
+        Input:
+            feat: [Batch, Channel, Time, Freq]
+            label: [Batch, Time, ...]
+        Logic:
+            Randomly roll features and labels along the time axis.
+        """
+        batch_size = feat.shape[0]
+        time_dim = feat.shape[2]  # feat time axis is 2
+
+        # 创建副本以防修改原数据
+        feat_shift = feat.copy()
+        label_shift = label.copy()
+
+        # 平移范围通常取序列长度的一半
+        shift_range = time_dim // 2
+
+        # 为每个样本生成一个随机平移量
+        shifts = np.random.randint(-shift_range, shift_range, size=batch_size)
+
+        for b in range(batch_size):
+            s = shifts[b]
+            if s != 0:
+                # 平移特征 (Time轴是 axis 2)
+                feat_shift[b] = np.roll(feat[b], s, axis=1)  # feat[b] shape is [C, T, F], so axis is 1
+                # 平移标签 (Time轴是 axis 1)
+                label_shift[b] = np.roll(label[b], s, axis=0)  # label[b] shape is [T, ...], so axis is 0
+
+        return feat_shift, label_shift
+
+    def moderate_mixup(self, feat, label):
+        """
+        Input:
+            feat: [Batch, Channel, Time, Freq]
+            label: [Batch, Time, ...]
+        Logic:
+            Mix two samples using Beta(5,5).
+            Label is chosen from the dominant sample (Hard Selection).
+        """
+        batch_size = feat.shape[0]
+
+        # 1. 生成随机索引进行混合
+        indices = np.random.permutation(batch_size)
+        feat_b = feat[indices]
+        label_b = label[indices]
+
+        # 2. 生成混合系数 lambda ~ Beta(5, 5)
+        lam = np.random.beta(5.0, 5.0, size=batch_size)
+
+        # 3. 混合特征
+        # 调整 lam 形状以进行广播 [Batch, 1, 1, 1]
+        lam_feat = lam.reshape(batch_size, 1, 1, 1)
+        feat_mix = lam_feat * feat + (1 - lam_feat) * feat_b
+
+        # 4. 标签选择 (Hard Selection)
+        # 根据 lambda 大小决定保留哪个样本的标签
+        label_mix = label.copy()
+
+        # 如果 lambda < 0.5，说明 feat_b 占主导，标签替换为 label_b
+        swap_indices = np.where(lam < 0.5)[0]
+        if len(swap_indices) > 0:
+            label_mix[swap_indices] = label_b[swap_indices]
+
+        return feat_mix, label_mix
 
     def generate(self):
         """
@@ -226,9 +297,6 @@ class DataGenerator(object):
                     for j in range(self._label_batch_seq_len):
                         label[j, :] = self._circ_buf_label.popleft()
 
-
-
-
                 # Split to sequences
                 feat = self._split_in_seqs(feat, self._feature_seq_len)
                 feat = np.transpose(feat, (0, 2, 1, 3))
@@ -256,6 +324,12 @@ class DataGenerator(object):
         label: [Batch, Time, N_track, 4, K]
                - axis 3: [act, x, y, z] -> 索引 0, 1, 2, 3
         """
+        if self.use_frameshift:
+            feat, label = self.frame_shift(feat, label)
+
+        if self.use_mixup:
+            feat, label = self.moderate_mixup(feat, label)
+
         batch_size = feat.shape[0]
 
         # 仅针对 7 通道 FOA 数据进行空间增强 (4 Mic + 3 IV)
@@ -330,13 +404,6 @@ class DataGenerator(object):
         # ---------------------------------------------------------------------
         # 必须对所有通道、所有时间步/频率步应用相同的 Mask
         for b in range(batch_size):
-            # 频率掩码 (Freq Masking)
-            if np.random.random() < 0.5:
-                F = feat.shape[3]
-                f_width = np.random.randint(1, int(F * 0.08))  # 最多遮挡 8%
-                f_start = np.random.randint(0, F - f_width)
-                feat[b, :, :, f_start:f_start + f_width] = 0.0
-
             # 时间掩码 (Time Masking)
             if np.random.random() < 0.5:
                 T = feat.shape[2]
