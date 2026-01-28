@@ -11,7 +11,7 @@ def get_params(argv='1'):
 
         finetune_mode=True,
         # Finetune on existing model, requires the pretrained model path set - pretrained_model_weights
-        pretrained_model_weights='output/2023/1000_35_dev_split0_multiaccdoa_foa/models_finetune_1.18_large/model.h5',
+        pretrained_model_weights='output/2023/1000_41_dev_split0_multiaccdoa_foa/models_finetune_1.24_large/model.h5',
 
         # INPUT PATHnum
         dataset_dir='./data/2023DCASE_data/',  # Base folder containing the foa/mic and metadata folders
@@ -20,7 +20,7 @@ def get_params(argv='1'):
         feat_label_dir='./data/feature_labels_2023/',  # Directory to dump extracted features and labels
 
         save_dir='output/2023',  # 'output/2022', 'output/2023'
-        model_dir='models_finetune_1.24_large/',  # Dumps the trained models and training curves in this folder
+        model_dir='models_finetune_1.28_large/',  # Dumps the trained models and training curves in this folder
         dcase_output_dir='results/',
         # recording-wise results are dumped in this path.
 
@@ -79,7 +79,7 @@ def get_params(argv='1'):
         lr_scheduler=False,
         lr_by_epoch=False,
         lr_ramp=False,
-        lr=2e-5,
+        lr=1e-5,
         min_lr=1e-8,
         blr=1e-3,
         warmup_epochs=-1,
@@ -97,6 +97,8 @@ def get_params(argv='1'):
         return_intermediate=True,
         use_detr=True,
         print_result=False,
+        use_mixup=False,
+        use_frameshift=False,
     )
 
     params['feature_label_resolution'] = int(params['label_hop_len_s'] // params['hop_len_s'])
@@ -225,7 +227,7 @@ def get_params(argv='1'):
         params['lr_scheduler'] = True
         params['lr_by_epoch'] = True
         params['lr_by_epoch_stay_epoch'] = 200  # 150
-        params['nb_epochs'] = 500
+        params['nb_epochs'] = 0
         params['batch_size'] = 32  # 256
 
         params['FreqAtten'] = True

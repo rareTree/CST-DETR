@@ -119,9 +119,9 @@ class SetCriterion(nn.Module):
             angle_error = torch.acos(cos_sim) * 180 / 3.14159265
 
 
-            # 2. 梯形策略：18度以内满分，18度以外衰减
-            safe_margin = 15.0  # 宽容区阈值
-            max_error = 30.0  # 最大可能误差
+            # 2. 梯形策略：15度以内满分，15度以外衰减
+            safe_margin = 20.0  # 宽容区阈值
+            max_error = 60.0  # 最大可能误差
 
             # 计算超出 18 度的部分
             excess_error = torch.clamp(angle_error - safe_margin, min=0.0)

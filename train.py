@@ -136,8 +136,8 @@ def main(argv):
         # Collect i/o data size and load model configuration
         data_in, data_out = data_gen_train.get_data_sizes()
         model = model_architecture.CST_former(data_in, data_out, params)
-        matcher = HungarianMatcher(cost_class=4.0, cost_doa=1.0)
-        weight_dict = {'loss_class': 2.0, 'loss_doa': 2.0}
+        matcher = HungarianMatcher(cost_class=4.0, cost_doa=2.0)
+        weight_dict = {'loss_class': 1.0, 'loss_doa': 5.0}
 
         if torch.cuda.device_count() > 1:
             print("Let's use", torch.cuda.device_count(), "GPUs!")
@@ -225,7 +225,7 @@ def main(argv):
                 optimizer,
                 mode='min',
                 factor=0.5,  # 每次降速一半 (例如 0.001 -> 0.0005)
-                patience=30,  # 忍耐 20 个 epoch
+                patience=20,  # 忍耐 20 个 epoch
                 verbose=True,
                 min_lr=1e-6
             )

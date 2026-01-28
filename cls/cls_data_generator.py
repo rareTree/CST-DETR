@@ -170,7 +170,7 @@ class DataGenerator(object):
         label_b = label[indices]
 
         # 2. 生成混合系数 lambda ~ Beta(5, 5)
-        lam = np.random.beta(5.0, 5.0, size=batch_size)
+        lam = np.random.beta(0.2, 0.2, size=batch_size)
 
         # 3. 混合特征
         # 调整 lam 形状以进行广播 [Batch, 1, 1, 1]
@@ -324,13 +324,15 @@ class DataGenerator(object):
         label: [Batch, Time, N_track, 4, K]
                - axis 3: [act, x, y, z] -> 索引 0, 1, 2, 3
         """
-        if self.use_frameshift:
-            feat, label = self.frame_shift(feat, label)
-
-        if self.use_mixup:
-            feat, label = self.moderate_mixup(feat, label)
 
         batch_size = feat.shape[0]
+
+        if self.use_frameshift and np.random.random() < 0.5:
+            feat, label = self.frame_shift(feat, label)
+
+            # Moderate Mixup: 50% 概率执行
+        if self.use_mixup and np.random.random() < 0.5:
+            feat, label = self.moderate_mixup(feat, label)
 
         # 仅针对 7 通道 FOA 数据进行空间增强 (4 Mic + 3 IV)
         # 如果是其他格式，直接跳过 ACS
